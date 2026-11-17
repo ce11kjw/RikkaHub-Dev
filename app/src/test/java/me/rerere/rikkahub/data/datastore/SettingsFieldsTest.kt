@@ -55,7 +55,8 @@ class SettingsFieldsTest {
         assertEquals(false, stored["dynamic_color"])
         assertEquals(9090, stored["web_server_port"])
         assertEquals(1.5f, stored["default_tts_playback_speed"])
-        assertEquals(0.9f, stored["auto_compress_threshold"])
+        // 4.0 起改为绝对 token 数（0~1M），不再用百分比
+        assertEquals(480_000, stored["auto_compress_token_limit"])
         assertEquals("title", stored["title_prompt"])
         assertEquals("00000000-0000-0000-0000-000000000001", stored["chat_model"])
         assertEquals("LOW", stored["fast_model_reasoning_level"])
@@ -137,10 +138,19 @@ private val SAMPLE = Settings(
     ocrModelId = id(5),
     ocrPrompt = "ocr",
     enableAutoCompress = false,
-    autoCompressThreshold = 0.9f,
+    autoCompressTokenLimit = 480_000,
     assistantId = id(20),
     providers = listOf(ProviderSetting.OpenAI(id = id(31), name = "Provider")),
-    assistants = listOf(Assistant(id = id(20), name = "Assistant")),
+    // 助手字段也要取非默认值，否则读写对不上也看不出来
+    // （enableCrossConversationContext 默认是 true，这里要取 false）
+    assistants = listOf(
+        Assistant(
+            id = id(20),
+            name = "Assistant",
+            enableRecentChatsReference = true,
+            enableCrossConversationContext = false,
+        )
+    ),
     assistantTags = listOf(Tag(id = id(7), name = "tag")),
     searchServices = listOf(
         SearchServiceOptions.BingLocalOptions(id = id(21)),
@@ -168,6 +178,25 @@ private val SAMPLE = Settings(
     webServerLocalhostOnly = true,
     backupReminderConfig = BackupReminderConfig(enabled = true),
     sponsorAlertDismissedAt = 7,
+    // 取和默认值不同的组合，确保读写能对得上
+    autoBackupConfig = AutoBackupConfig(
+        enabled = true,
+        intervalHours = 6,
+        onlyWhenCharging = false,
+        onlyOnWifi = false,
+        lastAutoBackupTime = 1234567890L,
+        lastAutoBackupResult = "ok",
+    ),
+    // 助手全局同步：默认关闭，样本里开起来以便验证读写
+    assistantSyncEnabled = true,
+    // 习惯分析：取和默认值不同的组合
+    habitAnalysisConfig = HabitAnalysisConfig(
+        enabled = true,
+        rangeDays = 90,
+        intervalDays = 7,
+        lastRunTime = 1790000000000L,
+        lastMessageCount = 456,
+    ),
 )
 
 private val STORED_KEYS = setOf(
@@ -195,7 +224,7 @@ private val STORED_KEYS = setOf(
     "ocr_model",
     "ocr_prompt",
     "enable_auto_compress",
-    "auto_compress_threshold",
+    "auto_compress_token_limit",
     "providers",
     "select_assistant",
     "assistants",
@@ -223,4 +252,7 @@ private val STORED_KEYS = setOf(
     "quick_messages",
     "backup_reminder_config",
     "sponsor_alert_dismissed_at",
+    "auto_backup_config",
+    "habit_analysis_config",
+    "assistant_sync_enabled",
 )

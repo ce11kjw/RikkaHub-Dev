@@ -18,6 +18,34 @@ interface UsageRecordDAO {
     )
     suspend fun getTotals(since: Long = 0): UsageTotals
 
+    /** 一段时间内的总花费（美元）。没有价格数据的记录 cost 为 0，不计入。 */
+    @Query("SELECT COALESCE(SUM(cost), 0) FROM usage_record WHERE created_at >= :since")
+    suspend fun getTotalCost(since: Long = 0): Double
+
+    /** 按时间桶汇总花费，格式与 [getTotalsByBucket] 保持一致。 */
+    @Query(
+        "SELECT strftime(:format, created_at / 1000, 'unixepoch', 'localtime') AS bucket, " +
+            "COALESCE(SUM(cost), 0) AS cost " +
+            "FROM usage_record WHERE created_at >= :since GROUP BY bucket ORDER BY bucket"
+    )
+    suspend fun getCostByBucket(format: String, since: Long): List<CostBucket>
+
+    /** 按模型汇总花费，和 [getTotalsByModel] 同样按 model_id 归并。 */
+    @Query(
+        "SELECT COALESCE(model_id, model_name) AS modelId, MAX(model_name) AS modelName, " +
+            "COALESCE(SUM(cost), 0) AS cost " +
+            "FROM usage_record WHERE created_at >= :since " +
+            "GROUP BY COALESCE(model_id, model_name) ORDER BY SUM(cost) DESC"
+    )
+    suspend fun getCostByModel(since: Long): List<ModelCost>
+
+    /** 有费用的记录数 vs 总记录数，用于告诉用户「多少请求没有价格数据」。 */
+    @Query("SELECT COUNT(*) FROM usage_record WHERE created_at >= :since AND cost > 0")
+    suspend fun countPricedRecords(since: Long): Int
+
+    @Query("SELECT COUNT(*) FROM usage_record WHERE created_at >= :since")
+    suspend fun countRecords(since: Long): Int
+
     /** 按本地时间分桶汇总，[format] 是 strftime 格式，比如按天用 `%Y-%m-%d`、按月用 `%Y-%m` */
     @Query(
         "SELECT strftime(:format, created_at / 1000, 'unixepoch', 'localtime') AS bucket, " +
@@ -78,6 +106,19 @@ data class ModelUsage(
     val promptTokens: Long,
     val completionTokens: Long,
     val cachedTokens: Long,
+)
+
+/** 某个时间桶的总花费 */
+data class CostBucket(
+    val bucket: String,
+    val cost: Double,
+)
+
+/** 某个模型的累计花费 */
+data class ModelCost(
+    val modelId: String?,
+    val modelName: String?,
+    val cost: Double,
 )
 
 data class SourceUsage(

@@ -60,6 +60,8 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.bindConfig
 import me.rerere.rikkahub.data.model.cancelInterruptedTools
 import me.rerere.rikkahub.data.model.deleteMessage
+import me.rerere.rikkahub.data.model.messagesForModel
+import me.rerere.rikkahub.data.ai.withPriorContextFrom
 import me.rerere.rikkahub.data.model.editMessage
 import me.rerere.rikkahub.data.model.fillModelSnapshots
 import me.rerere.rikkahub.data.model.fork
@@ -129,15 +131,26 @@ class ChatService(
 
     private fun replyTargetOf(conversation: Conversation, regenerateNodeId: Uuid?): ReplyTarget {
         val nodes = conversation.messageNodes
+        // 有压缩摘要时，切点之前的历史不发给模型，用摘要代替；
+        // 聊天记录本身不受影响，用户翻历史看到的还是完整对话。
+        val effective = conversation.messagesForModel()
         val history = if (regenerateNodeId != null) {
             val index = nodes.indexOfFirst { it.id == regenerateNodeId }
             check(index != -1) { "Message node $regenerateNodeId not found" }
-            conversation.currentMessages.take(index)
+            // index 是相对 nodes 的下标，但 effective 可能多了摘要、少了被折叠的消息，
+            // 所以按消息 id 裁到目标节点之前，不能用 nodes 的下标直接切
+            val targetId = nodes[index].currentMessage.id
+            val cut = effective.indexOfFirst { it.id == targetId }
+            if (cut >= 0) effective.take(cut) else effective
         } else {
-            conversation.currentMessages
+            effective
         }
         val nodeId = when {
-            history.lastOrNull()?.role == MessageRole.ASSISTANT -> nodes[history.lastIndex].id
+            // 按消息 id 反查节点，不能再用下标 —— history 可能因为压缩摘要少了前面几条，
+            // 下标和 nodes 对不上，直接索引会取错节点甚至越界
+            history.lastOrNull()?.role == MessageRole.ASSISTANT ->
+                nodes.firstOrNull { it.currentMessage.id == history.last().id }?.id
+                    ?: Uuid.random()
             regenerateNodeId != null -> regenerateNodeId
             else -> Uuid.random()
         }
@@ -683,6 +696,36 @@ class ChatService(
     // ---- 生成回复 ----
 
     /**
+     * 新会话开场时把上一个会话接进来；返回实际要用的会话。
+     *
+     * 只在会话还没聊过、助手开了这个开关、且会话本身还没带过前文时做一次，
+     * 算出来就写进会话，此后不再重算 —— 每轮重算会打掉提示词缓存，
+     * 也会让「接着刚才聊」莫名跳到别的会话去。
+     */
+    private suspend fun seedPriorContext(
+        session: ConversationSession,
+        settings: me.rerere.rikkahub.data.datastore.Settings,
+        conversation: Conversation,
+    ): Conversation {
+        val assistant = settings.getAssistantOf(conversation)
+        if (!assistant.enableCrossConversationContext) return conversation
+        if (conversation.priorContext != null) return conversation
+        // 已经开始聊了就不再补：一段「上一集」插到已经开局的话中间很奇怪
+        val hasDialogue = conversation.currentMessages.any { message ->
+            message.role == MessageRole.USER || message.role == MessageRole.ASSISTANT
+        }
+        if (hasDialogue) return conversation
+        val previous = runCatching {
+            conversationRepo.findPreviousConversation(conversation.id, conversation.assistantId)
+        }.onFailure {
+            Log.w(TAG, "seedPriorContext: cannot find previous conversation", it)
+        }.getOrNull() ?: return conversation
+        val seeded = conversation.withPriorContextFrom(previous)
+        if (seeded === conversation) return conversation
+        return session.update { seeded }
+    }
+
+    /**
      * 生成一轮回复：请求模型、执行工具，直到模型不再调用工具、有工具需要审批或达到步数上限。
      *
      * 默认接着当前分支的末尾回复；[regenerateNodeId] 不为空时只发送这个节点之前的消息，回复作为它的新分支。
@@ -715,7 +758,10 @@ class ChatService(
             // 中途压缩把检查点插在回复之后；重新生成较早的消息时后面还有别的节点，不压缩
             val canCompress = regenerateNodeId == null || conversation.messageNodes.lastOrNull()?.id == regenerateNodeId
 
-            val turn = requestFactory.createContext(settings, conversation)
+            // 新会话第一轮：把上一个会话的结尾接进来，用户不用先解释「我们刚才在说什么」。
+            // 只在还没有任何消息时算一次，之后固定写进会话，不再跟着上一个会话变。
+            val seeded = seedPriorContext(session, settings, conversation)
+            val turn = requestFactory.createContext(settings, seeded)
             senderName = if (turn.assistant.useAssistantAvatar) {
                 turn.assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
             } else {
@@ -731,6 +777,33 @@ class ChatService(
                 while (true) {
                     val replyNodeId = target.nodeId
                     val freshReply = afterCompression
+                    // 发请求之前先估算一遍：这条消息加上历史会不会把窗口撑爆。
+                    // 后台的自动压缩要等上一轮结束才判断，来不及拦住"一次性粘几十万字"这种情况 ——
+                    // 那种请求打出去就是 400，用户的输入也白丢了。这里提前拦住。
+                    if (!afterCompression && canCompress) {
+                        val estimated = me.rerere.rikkahub.data.ai.TokenEstimator.estimate(target.history)
+                        if (me.rerere.rikkahub.data.ai.TokenEstimator.needsCompression(estimated, turn.model.contextLength)) {
+                            Log.i(TAG, "runTurn: 预计 $estimated tokens 超过窗口 ${turn.model.contextLength}，先压缩再发")
+                            val compressed = runCatching {
+                                session.setActivity(SessionActivity.Compressing)
+                                insertCompressionCheckpoint(
+                                    session = session,
+                                    additionalPrompt = "",
+                                    keepRecentMessages = 0,
+                                    clearSuggestions = false,
+                                )
+                            }
+                            if (compressed.isSuccess) {
+                                // 压缩完成，按新状态重新算目标
+                                target = replyTargetOf(session.state.value, regenerateNodeId = null)
+                                afterCompression = true
+                            } else {
+                                // 压缩失败就别硬发：照原样发出去大概率被服务端拒，
+                                // 不如让用户看到明确的错误
+                                Log.w(TAG, "runTurn: 预检压缩失败，继续按原样发送", compressed.exceptionOrNull())
+                            }
+                        }
+                    }
                     val (request, hooks) = requestFactory.createAgent(
                         turn = turn,
                         messages = target.history,
@@ -756,6 +829,9 @@ class ChatService(
                                 session.processingStatus.value = null
                                 session.update { it.upsertMessage(replyNodeId, event.message) }
                                 session.replyMessageId.value = event.message.id
+                                // 流式内容先只改内存，这里只置个标记：
+                                // 后台每 2 秒落一次库，进程被系统杀掉时最多丢这两秒
+                                session.markDirty()
                                 // 通知等边缘副作用由 ChatNotificationManager 消费；
                                 // tryEmit 不挂起，事件丢失只影响单次通知更新，不能反压生成链
                                 appEventBus.tryEmit(
@@ -784,6 +860,8 @@ class ChatService(
             } finally {
                 withContext(NonCancellable) {
                     session.processingStatus.value = null
+                    // 停掉流式节流并立刻把剩余内容落库，避免最后两秒留在内存里
+                    runCatching { session.stopStreamingFlush() }
                     // 可能被取消了，或者意外结束，兜底保存
                     val finished = session.finishGeneration()
                     // 生成结束：取消 Live Update 通知，后台时发送完成通知
@@ -1041,8 +1119,23 @@ class ChatService(
 
     private fun reachesAutoCompressThreshold(model: Model, contextTokens: Int?): Boolean {
         val settings = settingsStore.settingsFlow.value
-        if (!settings.enableAutoCompress || contextTokens == null || model.contextLength <= 0) return false
-        return contextTokens >= model.contextLength * settings.autoCompressThreshold
+        if (!settings.enableAutoCompress || contextTokens == null) return false
+        return contextTokens >= effectiveCompressLimit(settings.autoCompressTokenLimit, model.contextLength)
+    }
+
+    /**
+     * 实际生效的压缩触发点。
+     *
+     * 用户设的是绝对 token 数，但不能超过模型自己的窗口 —— 小窗口模型（比如 32k）配上
+     * 600k 的阈值，永远等不到触发就已经被服务端拒绝了。这里取两者较小值，
+     * 再留 10% 余量给这一轮新增的内容。
+     */
+    private fun effectiveCompressLimit(configured: Int, modelContextLength: Int): Int {
+        if (modelContextLength <= 0) return configured.coerceAtLeast(1)
+        // 留 10% 缓冲；窗口本身很小时至少留 1k，避免算出 0 导致每轮都压缩
+        val headroom = (modelContextLength / 10).coerceAtLeast(1_000)
+        val modelCeiling = (modelContextLength - headroom).coerceAtLeast(1_000)
+        return minOf(configured, modelCeiling).coerceAtLeast(1)
     }
 
     /**
@@ -1125,14 +1218,23 @@ class ChatService(
             ),
         )
 
-        // 原消息原样保留，摘要插在压缩范围的最后一条消息之后。摘要生成期间对话可能已变化，
-        // 因此按节点定位插入到最新状态。
+        // 摘要存进独立字段，messageNodes 一个字都不动 —— 聊天记录里不会再冒出
+        // 一条「Summary of previous conversation」，用户翻历史时看到的始终是原始对话。
+        // 只有发请求时由 messagesForModel() 把切点之前的历史换成这段摘要。
+        //
+        // 摘要生成期间对话可能已变化，所以按节点 id 定位而不是按下标。
         session.update { latest ->
-            val updated = latest.insertContextCheckpoint(
-                afterNodeId = nodes[endIndex - 1].id,
-                summary = summary,
-            ) ?: throw IllegalStateException(
-                context.getString(R.string.chat_page_compress_conversation_changed)
+            val cutoffId = nodes[endIndex - 1].id
+            if (latest.messageNodes.none { it.id == cutoffId }) {
+                throw IllegalStateException(
+                    context.getString(R.string.chat_page_compress_conversation_changed)
+                )
+            }
+            val updated = latest.copy(
+                contextSummary = me.rerere.rikkahub.data.model.ContextSummary(
+                    summary = summary,
+                    upToNodeId = cutoffId,
+                ),
             )
             if (clearSuggestions) updated.copy(chatSuggestions = emptyList()) else updated
         }

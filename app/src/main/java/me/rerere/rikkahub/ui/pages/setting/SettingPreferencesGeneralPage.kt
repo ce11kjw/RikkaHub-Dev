@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
@@ -23,7 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.data.datastore.AUTO_COMPRESS_THRESHOLD_RANGE
+import me.rerere.rikkahub.data.datastore.AUTO_COMPRESS_TOKEN_RANGE
 import me.rerere.rikkahub.data.datastore.BackgroundEffectType
 import me.rerere.rikkahub.data.datastore.DisplaySetting
 import me.rerere.rikkahub.ui.components.nav.BackButton
@@ -97,6 +99,14 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
             item {
                 CardGroup {
                     switchItem(
+                        checked = settings.assistantSyncEnabled,
+                        onCheckedChange = { enabled ->
+                            vm.updateSettings { latest -> latest.copy(assistantSyncEnabled = enabled) }
+                        },
+                        supportingContent = { Text(stringResource(R.string.setting_assistant_sync_desc)) },
+                        headlineContent = { Text(stringResource(R.string.setting_assistant_sync_title)) },
+                    )
+                    switchItem(
                         checked = settings.enableAutoCompress,
                         onCheckedChange = {
                             vm.updateSettings { latest -> latest.copy(enableAutoCompress = it) }
@@ -109,19 +119,29 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
                             headlineContent = { Text(stringResource(R.string.setting_display_page_auto_compress_threshold_title)) },
                             supportingContent = { Text(stringResource(R.string.setting_display_page_auto_compress_threshold_desc)) },
                             trailingContent = {
-                                CardGroupValue("${(settings.autoCompressThreshold * 100).roundToInt()}%")
+                                CardGroupValue(formatTokenLimit(settings.autoCompressTokenLimit))
                             },
                         ) {
+                            // 按 10k 取整：token 数不需要个位精度，取整后滑块手感更稳，
+                            // 也避免存进一堆奇怪的值
+                            val step = 10_000
                             Slider(
-                                value = settings.autoCompressThreshold,
-                                onValueChange = {
-                                    // 按 5% 取整，避免浮点误差存成 0.79999995 之类的值
-                                    val value = (it * 20).roundToInt() / 20f
-                                    vm.updateSettings { latest -> latest.copy(autoCompressThreshold = value) }
+                                value = settings.autoCompressTokenLimit.toFloat(),
+                                onValueChange = { raw ->
+                                    val snapped = (raw / step).roundToInt() * step
+                                    vm.updateSettings { latest ->
+                                        latest.copy(autoCompressTokenLimit = snapped)
+                                    }
                                 },
-                                valueRange = AUTO_COMPRESS_THRESHOLD_RANGE,
-                                steps = 8,
+                                valueRange = AUTO_COMPRESS_TOKEN_RANGE.first.toFloat()..
+                                    AUTO_COMPRESS_TOKEN_RANGE.last.toFloat(),
                                 modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                text = "0 ~ 1M，默认 600k。低于模型窗口 10% 余量时自动按窗口缩放",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 4.dp),
                             )
                         }
                     }
@@ -302,4 +322,14 @@ fun SettingPreferencesGeneralPage(vm: SettingVM = koinViewModel()) {
             }
         }
     }
+}
+
+/** 把 token 数显示成人能读的形式：不足 1M 显示 k，够了显示 M。 */
+private fun formatTokenLimit(tokens: Int): String = when {
+    tokens <= 0 -> "关闭"
+    tokens >= 1_000_000 -> {
+        val m = tokens / 1_000_000f
+        if (m % 1f == 0f) "${m.roundToInt()}M" else String.format("%.1fM", m)
+    }
+    else -> "${tokens / 1000}k"
 }

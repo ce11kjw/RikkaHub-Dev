@@ -49,10 +49,18 @@ fun MeshGradientBackground(
         label = label,
     )
     // 针对各自身上的乘数，传入消除小数所需的最小公倍数圈数
-    val p1 by phase(5_500, loops = 20, "p1") // 1.15 对应 20 圈 (总长 110秒)
-    val p2 by phase(7_000, loops = 1,  "p2") // 1.0  对应 1 圈
-    val p3 by phase(8_500, loops = 10, "p3") // 0.9  对应 10 圈 (总长 85秒)
-    val p4 by phase(6_200, loops = 10, "p4") // 1.1  对应 10 圈 (总长 62秒)
+    val rawP1 = phase(5_500, loops = 20, "p1") // 1.15 对应 20 圈 (总长 110秒)
+    val rawP2 = phase(7_000, loops = 1,  "p2") // 1.0  对应 1 圈
+    val rawP3 = phase(8_500, loops = 10, "p3") // 0.9  对应 10 圈 (总长 85秒)
+    val rawP4 = phase(6_200, loops = 10, "p4") // 1.1  对应 10 圈 (总长 62秒)
+
+    // 光斑摆动周期是几秒到几十秒，没必要跟着屏幕刷新率更新。
+    // 这个背景同时是模糊采样的源，每帧都重画会让合成器一直满负荷 —— 限制到 30fps 后
+    // 画面看不出区别，但每帧的开销降到原来的 1/5 左右。
+    val p1 by rememberThrottledFloat(rawP1)
+    val p2 by rememberThrottledFloat(rawP2)
+    val p3 by rememberThrottledFloat(rawP3)
+    val p4 by rememberThrottledFloat(rawP4)
 
     val dark = LocalDarkMode.current
     val baseGradient = if (dark) {

@@ -54,7 +54,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.ChartColumn
 import me.rerere.hugeicons.stroke.Download04
+import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.hugeicons.stroke.Message01
+import me.rerere.hugeicons.stroke.MoneyBag02
 import me.rerere.hugeicons.stroke.PercentCircle
 import me.rerere.hugeicons.stroke.Rocket01
 import me.rerere.hugeicons.stroke.Upload02
@@ -461,7 +463,40 @@ private fun UsageTotalsGrid(usage: UsageStats, modifier: Modifier = Modifier) {
                 },
             )
         }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            StatCard(
+                modifier = Modifier.weight(1f),
+                icon = HugeIcons.MoneyBag02,
+                label = stringResource(R.string.stats_page_total_cost),
+                // 没有任何价格数据时显示「-」，不要显示 $0（那会让人以为真的没花钱）
+                value = if (usage.pricedRecords > 0) {
+                    formatCost(usage.totalCost)
+                } else {
+                    "-"
+                },
+            )
+            if (usage.costIncomplete && usage.pricedRecords > 0) {
+                // 有请求没算到价格：给出覆盖率，避免把「部分花费」误当成全部
+                StatCard(
+                    modifier = Modifier.weight(1f),
+                    icon = HugeIcons.InformationCircle,
+                    label = stringResource(R.string.stats_page_cost_coverage),
+                    value = "${usage.pricedRecords}/${usage.totalRecords}",
+                )
+            }
+        }
     }
+}
+
+/** 花费金额格式化：小额保留 4 位，大额保留 2 位，避免 $0.00 看起来像没花钱。 */
+private fun formatCost(value: Double): String = when {
+    value <= 0.0 -> "$0"
+    value < 0.01 -> "$%.4f".format(value)
+    value < 1.0 -> "$%.3f".format(value)
+    else -> "$%.2f".format(value)
 }
 
 /**

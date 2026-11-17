@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.translator
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.paging.Pager
@@ -122,12 +124,16 @@ class TranslatorVM(
 
                 val result = _translatedText.value
                 if (result.isNotBlank()) {
-                    historyRepository.add(
-                        sourceText = inputText,
-                        translatedText = result,
-                        targetLanguage = targetLanguage.toLanguageTag(),
-                        modelId = settings.translateModeId,
-                    )
+                    // 历史表要求 modelId 非空；解析不出模型时就不记这条，
+                    // 比塞一个假 id 进历史好
+                    settings.resolveModelId(settings.translateModeId)?.let { usedModelId ->
+                        historyRepository.add(
+                            sourceText = inputText,
+                            translatedText = result,
+                            targetLanguage = targetLanguage.toLanguageTag(),
+                            modelId = usedModelId,
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e

@@ -2,6 +2,7 @@ package me.rerere.ai.provider
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import me.rerere.ai.pricing.ModelPricing
 import kotlin.uuid.Uuid
 
 @Serializable
@@ -19,6 +20,11 @@ data class Model(
     val providerOverwrite: ProviderSetting? = null,
     // 上下文窗口大小(token)
     val contextLength: Int = 1_000_000,
+    /**
+     * 手动设置的价格（美元 / 百万 token），填了就用它算费用；
+     * 留空时按模型 id 去内置价格表里猜。自定义网关/中转站价格和官方不同时应该填这里。
+     */
+    val customPricing: ModelPricing? = null,
 )
 
 /**

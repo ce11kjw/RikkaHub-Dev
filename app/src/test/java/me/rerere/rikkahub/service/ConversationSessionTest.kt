@@ -715,4 +715,96 @@ class ConversationSessionTest {
             scope.cancel()
         }
     }
+
+    /**
+     * 流式生成时内容必须真的落库，不能一直留在内存里：
+     * 长会话时进程被系统杀掉是常事，留内存的内容会整段丢掉。
+     */
+    @Test
+    fun `streaming content is persisted on the flush interval`() = runTest {
+        val id = Uuid.random()
+        val store = FakeConversationStore(Conversation.ofId(id))
+        val session = ConversationSession(id, Conversation.ofId(id), this, store, {})
+        session.initialize(load = { store.persisted })
+
+        session.update { it.updateCurrentMessages(listOf(partialReply())) }
+        session.markDirty()
+
+        // 还没到间隔，不该写库
+        advanceTimeBy(STREAMING_FLUSH_INTERVAL_MS / 2)
+        runCurrent()
+        assertTrue("间隔未到不应写库", store.writes.isEmpty())
+
+        // 到点后应该写一次
+        advanceTimeBy(STREAMING_FLUSH_INTERVAL_MS)
+        runCurrent()
+        assertTrue("到点后应落库", store.writes.isNotEmpty())
+        assertTrue(
+            "落库内容应包含流式产出的文本",
+            store.persisted!!.currentMessages.last().toText().contains("partial reply"),
+        )
+        session.cleanup()
+    }
+
+    /** 每个 token 都调 markDirty 不能导致每个 token 都写库。 */
+    @Test
+    fun `markDirty is throttled instead of writing per chunk`() = runTest {
+        val id = Uuid.random()
+        val store = FakeConversationStore(Conversation.ofId(id))
+        val session = ConversationSession(id, Conversation.ofId(id), this, store, {})
+        session.initialize(load = { store.persisted })
+
+        // 模拟 100 个 chunk 在同一瞬间到达
+        repeat(100) {
+            session.update { it.updateCurrentMessages(listOf(partialReply())) }
+            session.markDirty()
+        }
+        runCurrent()
+        assertTrue("瞬时抖动不应产生任何写库", store.writes.isEmpty())
+
+        advanceTimeBy(STREAMING_FLUSH_INTERVAL_MS)
+        runCurrent()
+        assertEquals("一个间隔内只应写一次", 1, store.writes.size)
+        session.cleanup()
+    }
+
+    /** 生成结束必须把最后一段内容立刻写完，不能等下一个间隔。 */
+    @Test
+    fun `stopStreamingFlush writes remaining content immediately`() = runTest {
+        val id = Uuid.random()
+        val store = FakeConversationStore(Conversation.ofId(id))
+        val session = ConversationSession(id, Conversation.ofId(id), this, store, {})
+        session.initialize(load = { store.persisted })
+
+        session.update { it.updateCurrentMessages(listOf(partialReply())) }
+        session.markDirty()
+        val before = store.writes.size
+
+        session.stopStreamingFlush()
+
+        assertTrue("停止流式时应立即补写一次", store.writes.size > before)
+        assertTrue(
+            "最后一段内容应已落库",
+            store.persisted!!.currentMessages.last().toText().contains("partial reply"),
+        )
+        session.cleanup()
+    }
+
+    /** 清理会话后不应再有任何后台写库。 */
+    @Test
+    fun `cleanup cancels streaming flush`() = runTest {
+        val id = Uuid.random()
+        val store = FakeConversationStore(Conversation.ofId(id))
+        val session = ConversationSession(id, Conversation.ofId(id), this, store, {})
+        session.initialize(load = { store.persisted })
+
+        session.update { it.updateCurrentMessages(listOf(partialReply())) }
+        session.markDirty()
+        session.cleanup()
+
+        val afterCleanup = store.writes.size
+        advanceTimeBy(STREAMING_FLUSH_INTERVAL_MS * 3)
+        runCurrent()
+        assertEquals("清理后不应再有写库", afterCleanup, store.writes.size)
+    }
 }

@@ -11,6 +11,7 @@ import me.rerere.tts.provider.TTSManager
 
 class LocalTools(
     private val context: Context,
+    private val httpClient: okhttp3.OkHttpClient,
     private val eventBus: AppEventBus,
     private val ttsManager: TTSManager,
     private val settingsStore: SettingsStore,
@@ -34,6 +35,22 @@ class LocalTools(
     val calendarCreateTool by lazy { buildCalendarCreateTool(context) }
 
     val chartDisplayTool by lazy { buildChartDisplayTool() }
+
+    val httpRequestTool by lazy { buildHttpRequestTool(httpClient) }
+
+    val fetchUrlTool by lazy { buildFetchUrlTool(httpClient) }
+
+    val fileAccessTools by lazy { buildFileAccessTools(context) }
+
+    val sshExecTool by lazy { buildSshExecTool() }
+
+    val qrGenerateTool by lazy { buildQrGenerateTool(filesManager) }
+
+    val checkUrlTool by lazy { buildCheckUrlTool(httpClient) }
+
+    val weatherTool by lazy { buildWeatherTool(httpClient) }
+
+    val githubTool by lazy { buildGithubTool(httpClient) }
 
     val phoneUseTool by lazy {
         buildPhoneUseTool(
@@ -80,6 +97,24 @@ class LocalTools(
         // 不支持的渠道和系统版本上，之前在别处开过（比如导入的备份）也不提供
         if (options.contains(LocalToolOption.PhoneUse) && PhoneUseManager.isSupported) {
             tools.add(phoneUseTool)
+        }
+        if (options.contains(LocalToolOption.HttpRequest)) {
+            tools.add(httpRequestTool)
+            tools.add(fetchUrlTool)
+        }
+        if (options.contains(LocalToolOption.FileAccess)) {
+            tools.addAll(fileAccessTools)
+        }
+        if (options.contains(LocalToolOption.SshExec)) {
+            tools.add(sshExecTool)
+        }
+        if (options.contains(LocalToolOption.Utilities)) {
+            tools.add(qrGenerateTool)
+            tools.add(checkUrlTool)
+            tools.add(weatherTool)
+        }
+        if (options.contains(LocalToolOption.GithubQuery)) {
+            tools.add(githubTool)
         }
         return tools
     }

@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -30,7 +32,9 @@ class TranslationHandler(
         targetLanguage: Locale,
         onStreamUpdate: ((String) -> Unit)? = null,
     ): Flow<String> = flow {
-        val model = settings.providers.findModelById(settings.translateModeId)
+        val modelId = settings.resolveModelId(settings.translateModeId)
+            ?: error("Translation model not found")
+        val model = settings.providers.findModelById(modelId)
             ?: error("Translation model not found")
         val provider = model.findProvider(settings.providers)
             ?: error("Translation provider not found")

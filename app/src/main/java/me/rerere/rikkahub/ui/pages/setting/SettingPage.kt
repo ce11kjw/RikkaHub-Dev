@@ -250,6 +250,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         headlineContent = { Text(stringResource(R.string.setting_page_providers)) },
                     )
                     item(
+                        onClick = { navController.navigate(Screen.SettingHabit) },
+                        leadingContent = { CardGroupIcon(HugeIcons.Brain02, containerColor = containerColor, contentColor = contentColor) },
+                        supportingContent = { Text(stringResource(R.string.setting_habit_page_enable_desc)) },
+                        headlineContent = { Text(stringResource(R.string.setting_habit_page_title)) },
+                    )
+                    item(
                         onClick = { navController.navigate(Screen.SettingSearch) },
                         leadingContent = { CardGroupIcon(HugeIcons.GlobalSearch, containerColor = containerColor, contentColor = contentColor) },
                         supportingContent = { Text(stringResource(R.string.setting_page_search_service_desc)) },

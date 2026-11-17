@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.filterIsInstance
@@ -297,7 +299,7 @@ private fun Settings.consolidationModel(
 ): Pair<Model, ReasoningLevel>? {
     fun toolModel(id: Uuid?) = id?.let { findModelById(it) }?.takeIf { ModelAbility.TOOL in it.abilities }
     val (model, reasoningLevel) = toolModel(memoryModelId)?.let { it to memoryModelReasoningLevel }
-        ?: toolModel(fastModelId)?.let { it to fastModelReasoningLevel }
+        ?: toolModel(resolveModelId(fastModelId))?.let { it to fastModelReasoningLevel }
         ?: (conversation?.let { getChatModelOf(it) } ?: findModelById(assistant.chatModelId ?: chatModelId))
             ?.let { it to fastModelReasoningLevel }
         ?: return null

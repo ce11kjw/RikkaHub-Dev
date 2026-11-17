@@ -86,7 +86,14 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         // 模型选择
         json(FAVORITE_MODELS, Settings::favoriteModels) { copy(favoriteModels = it) },
         uuid(SELECT_MODEL, Settings::chatModelId) { copy(chatModelId = it) },
-        uuid(FAST_MODEL, Settings::fastModelId) { copy(fastModelId = it) },
+        SettingsField(
+            FAST_MODEL,
+            Settings::fastModelId,
+            { copy(fastModelId = it) },
+            // null = 跟随聊天模型，此时不存这个 key
+            encode = { it?.toString() },
+            decode = { Uuid.parse(it) },
+        ),
         reasoningLevel(FAST_MODEL_REASONING_LEVEL, Settings::fastModelReasoningLevel) {
             copy(fastModelReasoningLevel = it)
         },
@@ -101,7 +108,13 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         reasoningLevel(MEMORY_MODEL_REASONING_LEVEL, Settings::memoryModelReasoningLevel) {
             copy(memoryModelReasoningLevel = it)
         },
-        uuid(TRANSLATE_MODEL, Settings::translateModeId) { copy(translateModeId = it) },
+        SettingsField(
+            TRANSLATE_MODEL,
+            Settings::translateModeId,
+            { copy(translateModeId = it) },
+            encode = { it?.toString() },
+            decode = { Uuid.parse(it) },
+        ),
         plain(ENABLE_SUGGESTION, Settings::enableSuggestion) { copy(enableSuggestion = it) },
         uuid(IMAGE_GENERATION_MODEL, Settings::imageGenerationModelId) { copy(imageGenerationModelId = it) },
         plain(ENABLE_AUTO_TITLE, Settings::enableAutoTitle) { copy(enableAutoTitle = it) },
@@ -110,12 +123,18 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
         plain(TRANSLATE_THINKING_BUDGET, Settings::translateThinkingBudget) { copy(translateThinkingBudget = it) },
         plain(TRANSLATE_TARGET_LANGUAGE, Settings::translateTargetLanguage) { copy(translateTargetLanguage = it) },
         plain(SUGGESTION_PROMPT, Settings::suggestionPrompt) { copy(suggestionPrompt = it) },
-        uuid(OCR_MODEL, Settings::ocrModelId) { copy(ocrModelId = it) },
+        SettingsField(
+            OCR_MODEL,
+            Settings::ocrModelId,
+            { copy(ocrModelId = it) },
+            encode = { it?.toString() },
+            decode = { Uuid.parse(it) },
+        ),
         plain(OCR_PROMPT, Settings::ocrPrompt) { copy(ocrPrompt = it) },
 
         // 自动压缩
         plain(ENABLE_AUTO_COMPRESS, Settings::enableAutoCompress) { copy(enableAutoCompress = it) },
-        plain(AUTO_COMPRESS_THRESHOLD, Settings::autoCompressThreshold) { copy(autoCompressThreshold = it) },
+        plain(AUTO_COMPRESS_TOKEN_LIMIT, Settings::autoCompressTokenLimit) { copy(autoCompressTokenLimit = it) },
 
         // 提供商
         json(PROVIDERS, Settings::providers) { copy(providers = it) },
@@ -173,6 +192,11 @@ internal val SETTINGS_FIELDS: List<SettingsField<*, *>> = with(SettingsStore) {
 
         // 备份提醒
         json(BACKUP_REMINDER_CONFIG, Settings::backupReminderConfig) { copy(backupReminderConfig = it) },
+
+        // 自动备份
+        json(AUTO_BACKUP_CONFIG, Settings::autoBackupConfig) { copy(autoBackupConfig = it) },
+        json(HABIT_ANALYSIS_CONFIG, Settings::habitAnalysisConfig) { copy(habitAnalysisConfig = it) },
+        plain(ASSISTANT_SYNC_ENABLED, Settings::assistantSyncEnabled) { copy(assistantSyncEnabled = it) },
 
         // 赞助提醒
         plain(SPONSOR_ALERT_DISMISSED_AT, Settings::sponsorAlertDismissedAt) { copy(sponsorAlertDismissedAt = it) },

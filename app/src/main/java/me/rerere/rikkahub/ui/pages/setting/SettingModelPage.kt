@@ -182,6 +182,8 @@ private fun ModelSettingsPage(settings: Settings, vm: SettingVM, contentPadding:
                     state = fastModel,
                     iconContainerColor = containerColor,
                     iconContentColor = contentColor,
+                    placeholder = R.string.setting_model_page_follow_chat_model,
+                    onClear = { vm.updateSettings { latest -> latest.copy(fastModelId = null) } },
                 )
                 item(
                     headlineContent = { Text(stringResource(R.string.assistant_page_thinking_budget)) },
@@ -253,6 +255,8 @@ private fun ModelSettingsPage(settings: Settings, vm: SettingVM, contentPadding:
                     state = translateModel,
                     iconContainerColor = containerColor,
                     iconContentColor = contentColor,
+                    placeholder = R.string.setting_model_page_translate_model_follow_chat,
+                    onClear = { vm.updateSettings { latest -> latest.copy(translateModeId = null) } },
                 )
                 modelItem(
                     icon = HugeIcons.ScanText,
@@ -261,6 +265,8 @@ private fun ModelSettingsPage(settings: Settings, vm: SettingVM, contentPadding:
                     state = ocrModel,
                     iconContainerColor = containerColor,
                     iconContentColor = contentColor,
+                    placeholder = R.string.setting_model_page_ocr_model_follow_chat,
+                    onClear = { vm.updateSettings { latest -> latest.copy(ocrModelId = null) } },
                 )
             }
         }

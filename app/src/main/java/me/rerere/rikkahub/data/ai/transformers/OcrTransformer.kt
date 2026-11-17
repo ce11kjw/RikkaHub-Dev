@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.ai.transformers
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
@@ -90,7 +92,7 @@ object OcrTransformer : InputMessageTransformer, KoinComponent {
         }
 
         val settings = get<SettingsStore>().settingsFlow.value
-        val model = settings.findModelById(settings.ocrModelId) ?: return "[Image]"
+        val model = settings.findModelById(settings.resolveModelId(settings.ocrModelId)) ?: return "[Image]"
         val providerSetting = model.findProvider(settings.providers) ?: return "[Image]"
         val provider = get<UsageRecorder>().wrap(
             get<ProviderManager>().getProviderByType(providerSetting),

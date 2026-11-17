@@ -129,7 +129,12 @@ class SettingsStore internal constructor(
 
         // 自动压缩
         val ENABLE_AUTO_COMPRESS = booleanPreferencesKey("enable_auto_compress")
-        val AUTO_COMPRESS_THRESHOLD = floatPreferencesKey("auto_compress_threshold")
+        // 旧版本存的是 float 百分比（键名 auto_compress_threshold）；
+        // 新版本存绝对 token 数，换键名让旧值自然失效、回落到新的默认值 600k
+        val AUTO_COMPRESS_TOKEN_LIMIT = intPreferencesKey("auto_compress_token_limit")
+
+        /** 旧字段，只用于清理，不再读取 */
+        val LEGACY_AUTO_COMPRESS_THRESHOLD = floatPreferencesKey("auto_compress_threshold")
 
         // 提供商
         val PROVIDERS = stringPreferencesKey("providers")
@@ -180,6 +185,9 @@ class SettingsStore internal constructor(
 
         // 备份提醒
         val BACKUP_REMINDER_CONFIG = stringPreferencesKey("backup_reminder_config")
+        val AUTO_BACKUP_CONFIG = stringPreferencesKey("auto_backup_config")
+        val HABIT_ANALYSIS_CONFIG = stringPreferencesKey("habit_analysis_config")
+        val ASSISTANT_SYNC_ENABLED = booleanPreferencesKey("assistant_sync_enabled")
 
         // 统计
         val LAUNCH_COUNT = intPreferencesKey("launch_count")
@@ -258,14 +266,36 @@ class SettingsStore internal constructor(
         // 加载完成前的修改等真实设置出来再应用。已加载时这里不能挂起：输入框、slider 依赖修改同步生效
         if (state.value.init) awaitLoaded()
         synchronized(stateLock) {
-            val updated = fn(state.value)
+            val before = state.value
+            val updated = fn(before)
             if (updated.init) {
                 Log.w(TAG, "Cannot update dummy settings")
                 return
             }
+            // 助手全局同步：开了这个开关，改一个助手等于改全部。
+            // 放在这里统一拦截，不用去每个 UI 调用点各写一遍 —— 漏一处就会出现
+            // 「同步开关开着但某个页面改完没生效」这种难查的问题。
+            val withSync = if (updated.assistantSyncEnabled) {
+                val changed = me.rerere.rikkahub.data.model.AssistantSync.findChanged(
+                    before.assistants,
+                    updated.assistants,
+                )
+                if (changed != null) {
+                    updated.copy(
+                        assistants = me.rerere.rikkahub.data.model.AssistantSync.broadcast(
+                            changed = changed,
+                            others = updated.assistants,
+                        ),
+                    )
+                } else {
+                    updated
+                }
+            } else {
+                updated
+            }
             // 规整会重建提供商、助手等对象，而界面按引用判断它们有没有变：规整没改动任何东西时保留传入的实例
-            val normalized = updated.normalized()
-            state.value = if (normalized == updated) updated else normalized
+            val normalized = withSync.normalized()
+            state.value = if (normalized == withSync) withSync else normalized
         }
         persist()
     }

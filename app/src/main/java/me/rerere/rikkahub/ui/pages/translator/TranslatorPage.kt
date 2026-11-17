@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.translator
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import android.content.ClipData
 import android.content.Intent
 import androidx.compose.animation.AnimatedContent
@@ -108,7 +110,10 @@ fun TranslatorPage(vm: TranslatorVM = koinViewModel()) {
     val errorText = stringResource(R.string.translator_page_error)
 
     // settings.init 为 true 时设置还没加载完，这时不提示没选模型
-    val modelMissing = !settings.init && settings.providers.findModelById(settings.translateModeId) == null
+    // 跟随聊天模型时，聊天模型能查到就算有模型可用
+    val modelMissing = !settings.init &&
+        settings.resolveModelId(settings.translateModeId)
+            ?.let { settings.providers.findModelById(it) } == null
 
     LaunchedEffect(Unit) {
         vm.errorFlow.collect { error ->

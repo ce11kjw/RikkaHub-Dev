@@ -17,6 +17,8 @@ import me.rerere.ai.ui.StreamChunk
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.db.dao.DayCount
 import me.rerere.rikkahub.data.db.dao.ModelUsage
+import me.rerere.rikkahub.data.db.dao.CostBucket
+import me.rerere.rikkahub.data.db.dao.ModelCost
 import me.rerere.rikkahub.data.db.dao.SourceUsage
 import me.rerere.rikkahub.data.db.dao.UsageBucket
 import me.rerere.rikkahub.data.db.dao.UsageRecordDAO
@@ -115,6 +117,17 @@ private class FakeUsageRecordDAO : UsageRecordDAO {
     override suspend fun getRequestCountPerDay(source: String, since: Long) = emptyList<DayCount>()
 
     override suspend fun getTotalsBySource(since: Long) = emptyList<SourceUsage>()
+
+    // 费用相关查询：测试只用 insert，这些给空实现即可
+    override suspend fun getTotalCost(since: Long) = 0.0
+
+    override suspend fun getCostByBucket(format: String, since: Long) = emptyList<CostBucket>()
+
+    override suspend fun getCostByModel(since: Long) = emptyList<ModelCost>()
+
+    override suspend fun countPricedRecords(since: Long) = 0
+
+    override suspend fun countRecords(since: Long) = 0
 }
 
 private class FakeProvider(

@@ -31,6 +31,14 @@ data class Assistant(
     val useGlobalMemory: Boolean = false, // 使用全局共享记忆而非助手隔离记忆
     val autoConsolidateMemory: Boolean = true, // 对话停下来后在后台自动整理记忆; 关闭后只能手动整理
     val enableRecentChatsReference: Boolean = false,
+    /**
+     * 跨对话上下文：新会话自动接上一个会话，且 `recent_chats` / `conversation_search` /
+     * `conversation_read` 不再只限当前助手（没有它们时自动补上）。
+     *
+     * 默认开：开新对话接着刚才说，本来就是最自然的期待。想干净地开一局时关掉即可，
+     * 关掉之后新会话不会带任何前文，工具也只认当前助手。
+     */
+    val enableCrossConversationContext: Boolean = true,
     val messageTemplate: String = "{{ message }}",
     val presetMessages: List<UIMessage> = emptyList(),
     val quickMessageIds: Set<Uuid> = emptySet(),

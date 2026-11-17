@@ -47,6 +47,8 @@ data class UsagePoint(
     val promptTokens: Long,
     val completionTokens: Long,
     val cachedTokens: Long,
+    // 这一天的花费（美元）；没有价格数据时为 0
+    val cost: Double = 0.0,
 ) {
     val totalTokens get() = promptTokens + completionTokens
 }
@@ -55,6 +57,7 @@ data class ModelUsageItem(
     // 模型已被删除且没有名称快照时为空
     val name: String?,
     val totalTokens: Long,
+    val cost: Double = 0.0,
 )
 
 data class UsageStats(
@@ -64,7 +67,15 @@ data class UsageStats(
     val byMonth: Boolean,
     val models: List<ModelUsageItem>,
     val sources: List<SourceUsage>,
-)
+    /** 区间内总花费（美元）。 */
+    val totalCost: Double = 0.0,
+    /** 有价格数据的请求数 / 总请求数，用来提示「有些请求没算钱」。 */
+    val pricedRecords: Int = 0,
+    val totalRecords: Int = 0,
+) {
+    /** 不是所有请求都有价格时，界面上要把「未估算」说清楚，别让用户以为是全部花费。 */
+    val costIncomplete: Boolean get() = pricedRecords < totalRecords
+}
 
 class StatsVM(
     private val conversationDAO: ConversationDAO,
@@ -138,9 +149,20 @@ class StatsVM(
             // 用量流水包含标题、翻译等不落到消息里的请求，删掉的会话也还算在内
             val totals = usageRecordDAO.getTotals(since)
             val byMonth = range.days == null
-            val buckets = usageRecordDAO.getTotalsByBucket(if (byMonth) "%Y-%m" else "%Y-%m-%d", since)
-            val points = if (byMonth) monthlyPoints(buckets, today) else dailyPoints(buckets, startDate!!, today)
+            val bucketFormat = if (byMonth) "%Y-%m" else "%Y-%m-%d"
+            val buckets = usageRecordDAO.getTotalsByBucket(bucketFormat, since)
+            // 费用按同样的时间桶查一次，之后和 token 桶按 key 合并
+            val costByBucket = usageRecordDAO.getCostByBucket(bucketFormat, since)
+                .associate { it.bucket to it.cost }
+            val points = if (byMonth) {
+                monthlyPoints(buckets, today, costByBucket)
+            } else {
+                dailyPoints(buckets, startDate!!, today, costByBucket)
+            }
             val settings = settingsStore.awaitLoaded()
+            // 按模型归并的费用，key 与 getTotalsByModel 的归并键一致
+            val costByModel = usageRecordDAO.getCostByModel(since)
+                .associateBy { it.modelId ?: it.modelName.orEmpty() }
             val models = usageRecordDAO.getTotalsByModel(since).map { usage ->
                 val model = usage.modelId
                     ?.let { runCatching { Uuid.parse(it) }.getOrNull() }
@@ -148,6 +170,7 @@ class StatsVM(
                 ModelUsageItem(
                     name = model?.displayName?.ifBlank { null } ?: model?.modelId ?: usage.modelName,
                     totalTokens = usage.promptTokens + usage.completionTokens,
+                    cost = costByModel[usage.modelId ?: usage.modelName.orEmpty()]?.cost ?: 0.0,
                 )
             }
             _usage.value = UsageStats(
@@ -157,21 +180,36 @@ class StatsVM(
                 byMonth = byMonth,
                 models = models,
                 sources = usageRecordDAO.getTotalsBySource(since),
+                totalCost = usageRecordDAO.getTotalCost(since),
+                pricedRecords = usageRecordDAO.countPricedRecords(since),
+                totalRecords = usageRecordDAO.countRecords(since),
             )
         }
     }
 
     // 没有用量的日子补 0，柱子才能按日期均匀排开
-    private fun dailyPoints(buckets: List<UsageBucket>, start: LocalDate, today: LocalDate): List<UsagePoint> {
+    private fun dailyPoints(
+        buckets: List<UsageBucket>,
+        start: LocalDate,
+        today: LocalDate,
+        costByBucket: Map<String, Double>,
+    ): List<UsagePoint> {
         val byDate = buckets.associateBy { it.bucket }
         return generateSequence(start) { it.plusDays(1) }
             .takeWhile { !it.isAfter(today) }
-            .map { date -> byDate[date.toString()].toPoint(date) }
+            .map { date ->
+                val key = date.toString()
+                byDate[key].toPoint(date, costByBucket[key] ?: 0.0)
+            }
             .toList()
     }
 
     // 全部范围按月，从最早有用量的月份排到本月
-    private fun monthlyPoints(buckets: List<UsageBucket>, today: LocalDate): List<UsagePoint> {
+    private fun monthlyPoints(
+        buckets: List<UsageBucket>,
+        today: LocalDate,
+        costByBucket: Map<String, Double>,
+    ): List<UsagePoint> {
         val byMonth = buckets.mapNotNull { bucket ->
             runCatching { YearMonth.parse(bucket.bucket) to bucket }.getOrNull()
         }.toMap()
@@ -179,14 +217,18 @@ class StatsVM(
         val current = YearMonth.from(today)
         return generateSequence(first) { it.plusMonths(1) }
             .takeWhile { !it.isAfter(current) }
-            .map { month -> byMonth[month].toPoint(month.atDay(1)) }
+            .map { month ->
+                val key = month.toString()
+                byMonth[month].toPoint(month.atDay(1), costByBucket[key] ?: 0.0)
+            }
             .toList()
     }
 
-    private fun UsageBucket?.toPoint(date: LocalDate) = UsagePoint(
+    private fun UsageBucket?.toPoint(date: LocalDate, cost: Double) = UsagePoint(
         date = date,
         promptTokens = this?.promptTokens ?: 0,
         completionTokens = this?.completionTokens ?: 0,
         cachedTokens = this?.cachedTokens ?: 0,
+        cost = cost,
     )
 }

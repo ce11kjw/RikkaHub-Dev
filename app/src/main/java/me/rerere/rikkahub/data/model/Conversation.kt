@@ -36,6 +36,27 @@ data class Conversation(
     val workspaceCwd: String? = null,
     // 所属文件夹（助手内分组），null 表示未归入任何文件夹
     val folderId: Uuid? = null,
+    /**
+     * 上下文压缩摘要，**只在发给模型时使用，不参与聊天记录展示**。
+     *
+     * [upToNodeId] 之前的消息不发给模型，改用 [summary] 代替；这些消息本身仍完整保留，
+     * 界面上照常显示，用户可以随时往回翻。
+     *
+     * 存成独立字段而不是往 messageNodes 里插一条"检查点"消息，是因为插进去之后
+     * 摘要会作为一条真实消息出现在聊天记录里，删不掉也改不动，回看历史时非常碍事。
+     */
+    val contextSummary: ContextSummary? = null,
+    /**
+     * 从上一个会话继承来的开场摘要，**只为新会话自动接上前文**。
+     *
+     * 和 [contextSummary] 的区别：那个是本会话压得太长时的折叠，这个是「上一集讲了什么」。
+     * 它拼进 system prompt，而不是作为一条 user 消息插进历史：塞进历史会打乱
+     * user/assistant 的交替，界面也可能把它当成用户说的话。
+     *
+     * 只在新会话的第一轮写入一次，之后不再跟着上一个会话变化 ——
+     * 用户接着聊的是这轮对话，不是那轮对话的最新状态。
+     */
+    val priorContext: String? = null,
     @Transient
     val newConversation: Boolean = false
 ) {
@@ -257,4 +278,41 @@ internal fun UIMessagePart.mapLocalFileUrls(transform: (String) -> String): UIMe
         is UIMessagePart.Tool -> copy(output = output.map { it.mapLocalFileUrls(transform) })
         else -> this
     }
+}
+
+/**
+ * 一段上下文压缩的结果。
+ *
+ * @param summary 模型生成的摘要正文
+ * @param upToNodeId 这个节点（含）之前的消息被摘要替代，不再发给模型
+ * @param createdAt 生成时间，用于判断是否需要重新压缩
+ */
+@Serializable
+data class ContextSummary(
+    val summary: String,
+    val upToNodeId: Uuid,
+    @Serializable(with = InstantSerializer::class)
+    val createdAt: Instant = Instant.now(),
+)
+
+/**
+ * 取出真正要发给模型的消息。
+ *
+ * 有摘要时丢弃 [ContextSummary.upToNodeId] 之前的消息，把摘要作为一条合成消息插在最前面；
+ * 没有摘要时原样返回。聊天记录本身不受影响。
+ *
+ * 摘要用 `isSynthetic = true` 标记，界面上不会当成用户消息渲染（聊胜于无的双保险，
+ * 正常情况它根本不会进入 messageNodes）。
+ */
+fun Conversation.messagesForModel(): List<UIMessage> {
+    val summary = contextSummary ?: return currentMessages
+    val cutoff = messageNodes.indexOfFirst { it.id == summary.upToNodeId }
+    // 切点节点已被删除（比如用户删了那条消息）：摘要失效，退回完整历史
+    if (cutoff < 0) return currentMessages
+    // 切点之后没消息时也要把摘要发出去 —— 返回完整历史等于让压缩完全失效，
+    // 上下文照样爆，那就白压了
+    val remaining = messageNodes.drop(cutoff + 1).map { it.currentMessage }
+    return listOf(
+        UIMessage.user(summary.summary).copy(isSynthetic = true)
+    ) + remaining
 }

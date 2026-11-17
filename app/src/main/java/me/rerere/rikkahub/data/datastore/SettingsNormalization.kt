@@ -99,8 +99,11 @@ internal fun Settings.withoutInvalidReferences(): Settings {
 private fun Settings.withValuesInRange(): Settings = copy(
     searchServiceSelected = searchServiceSelected.coerceIn(0, (searchServices.size - 1).coerceAtLeast(0)),
     defaultTTSPlaybackSpeed = defaultTTSPlaybackSpeed.coerceIn(0.5f, 2.0f),
-    autoCompressThreshold = autoCompressThreshold.coerceIn(AUTO_COMPRESS_THRESHOLD_RANGE),
+    autoCompressTokenLimit = autoCompressTokenLimit.coerceIn(AUTO_COMPRESS_TOKEN_RANGE),
 )
 
-/** 自动压缩触发比例的可选范围，设置页的滑块也用它 */
-val AUTO_COMPRESS_THRESHOLD_RANGE = 0.5f..0.95f
+/** 自动压缩触发点的可选范围（token），设置页的滑块也用它：0 ~ 1M */
+val AUTO_COMPRESS_TOKEN_RANGE = 0..1_000_000
+
+/** 默认触发点：600k。留出缓冲，避免一轮工具结果就把上下文顶爆 */
+const val DEFAULT_AUTO_COMPRESS_TOKEN_LIMIT = 600_000

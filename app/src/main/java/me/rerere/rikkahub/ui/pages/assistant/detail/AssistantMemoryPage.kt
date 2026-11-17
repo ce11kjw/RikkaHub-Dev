@@ -265,6 +265,20 @@ private fun MemorySettingsTab(
                 supportingContent = { Text(stringResource(R.string.assistant_page_recent_chats_desc)) },
                 headlineContent = { Text(stringResource(R.string.assistant_page_recent_chats)) },
             )
+            // 跨对话上下文：新会话自动接上一段，且上面那两个工具不再只限当前助手。
+            // 它自己会注册那些工具，不依赖上面那个开关，关掉这个才是「干净开一局」。
+            switchItem(
+                checked = assistant.enableCrossConversationContext,
+                onCheckedChange = {
+                    onUpdateAssistant(
+                        assistant.copy(
+                            enableCrossConversationContext = it
+                        )
+                    )
+                },
+                supportingContent = { Text(stringResource(R.string.assistant_page_cross_context_desc)) },
+                headlineContent = { Text(stringResource(R.string.assistant_page_cross_context)) },
+            )
         }
 
         CardGroup {

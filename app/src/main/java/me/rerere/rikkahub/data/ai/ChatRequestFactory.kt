@@ -72,6 +72,8 @@ class ChatTurnContext(
     val workspaceCwd: String?,
     val memories: List<MemoryFile>,
     val tools: List<Tool>,
+    /** 新会话从上一个会话继承的开场摘要，拼在 system prompt 里 */
+    val priorContext: String? = null,
 )
 
 /** 把会话变成发给模型的请求：系统提示词、上下文裁剪、输入输出转换都在这里 */
@@ -116,12 +118,15 @@ class ChatRequestFactory(
             conversationSystemPrompt = conversation.customSystemPrompt,
             workspaceCwd = conversation.workspaceCwd,
             memories = if (assistant.enableMemory) memoryRepository.getFiles(assistant.memoryId) else emptyList(),
+            priorContext = conversation.priorContext,
             tools = chatToolFactory.createTools(
                 settings = settings,
                 assistant = assistant,
                 model = model,
                 conversationId = conversation.id,
                 workspaceCwd = conversation.workspaceCwd,
+                // 开了跨对话就一直能查别的助手；否则只在当前助手里查
+                crossAssistantContext = assistant.enableCrossConversationContext,
             ),
         )
     }
@@ -240,6 +245,14 @@ class ChatRequestFactory(
                     }
                 if (effectiveSystemPrompt.isNotBlank()) {
                     append(effectiveSystemPrompt)
+                }
+
+                // 上一段对话的背景。放在记忆之前：它描述的是「刚才」，比长期记忆更贴近当下。
+                // 这段内容在会话内固定不变，位置也固定，不会打掉提示词缓存。
+                turn.priorContext?.takeIf { it.isNotBlank() }?.let { prior ->
+                    appendLine()
+                    appendLine()
+                    append(prior)
                 }
 
                 // 记忆

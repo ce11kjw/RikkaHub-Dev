@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.data.ai
 
+import me.rerere.rikkahub.data.datastore.resolveModelId
+
 import android.content.Context
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderManager
@@ -21,7 +23,7 @@ class ConversationMetaGenerator(
 ) {
     /** 快速模型或它的提供商找不到时抛出异常，提示用户检查设置 */
     suspend fun generateTitle(settings: Settings, conversation: Conversation): String {
-        val model = settings.findModelById(settings.fastModelId)
+        val model = settings.findModelById(settings.resolveModelId(settings.fastModelId))
             ?: throw IllegalStateException(context.getString(R.string.error_fast_model_not_found))
         val provider = model.findProvider(settings.providers)
             ?: throw IllegalStateException(context.getString(R.string.error_fast_model_provider_not_found))
@@ -39,7 +41,7 @@ class ConversationMetaGenerator(
 
     /** 没有配置快速模型时返回 null */
     suspend fun generateSuggestions(settings: Settings, conversation: Conversation): List<String>? {
-        val model = settings.findModelById(settings.fastModelId) ?: return null
+        val model = settings.findModelById(settings.resolveModelId(settings.fastModelId)) ?: return null
         val provider = model.findProvider(settings.providers) ?: return null
         return generate(
             settings,

@@ -32,6 +32,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -303,15 +305,19 @@ private fun ChatListNormal(
         // 自动滚动到底部
         if (settings.displaySetting.enableAutoScroll) {
             LaunchedEffect(state) {
-                snapshotFlow { state.layoutInfo.visibleItemsInfo }.collect { visibleItemsInfo ->
-                    // println("is bottom = ${visibleItemsInfo.isAtBottom()}, scroll = ${state.isScrollInProgress}, can_scroll = ${state.canScrollForward}, loading = $loading")
-                    if (!state.isScrollInProgress && loadingState) {
-                        if (visibleItemsInfo.isAtBottom()) {
+                snapshotFlow { state.layoutInfo.visibleItemsInfo }
+                    // 流式生成时每条消息的高度都在增长，visibleItemsInfo 每帧都是新值，
+                    // 如果不去重，下面的判断和 requestScrollToItem 会每帧执行一次：
+                    // 滚动本身又会让可见项变化，形成「滚一下再判断一次」的反馈循环，长回复时明显掉帧。
+                    // 这里只关心「是否贴底」这一个布尔值，映射后再去重，等价于原来每帧判断的结果，
+                    // 但只在贴底状态真正翻转时才触发一次滚动请求。
+                    .map { it.isAtBottom() }
+                    .distinctUntilChanged()
+                    .collect { atBottom ->
+                        if (atBottom && !state.isScrollInProgress && loadingState) {
                             state.requestScrollToItem(conversationUpdated.messageNodes.lastIndex + 10)
-                            // Log.i(TAG, "ChatList: scroll to ${conversationUpdated.messageNodes.lastIndex}")
                         }
                     }
-                }
             }
         }
 
@@ -346,14 +352,38 @@ private fun ChatListNormal(
                 items = conversation.messageNodes,
                 key = { index, item -> item.id },
             ) { index, node ->
+                // 流式生成时每个 token 都会重组整个列表；把逐条消息的回调 remember 住，
+                // 让未变化的消息（除正在生成的那条）能被 Compose 跳过，不再每个 token 重建一遍。
+                // 这不会改变任何交互行为，只是避免每帧新建 lambda 导致整屏消息强制重组。
+                val currentMessage = node.currentMessage
+                val nodeId = node.id
+
+                val onRegenerateForNode = remember(currentMessage.id) {
+                    { onRegenerate(currentMessage) }
+                }
+                // onEdit 会读取 message.parts（填入输入框），缓存 key 必须包含 parts，
+                // 否则编辑一条还在生成的回复时会拿到旧内容
+                val onEditForNode = remember(currentMessage.id, currentMessage.parts) {
+                    { onEdit(currentMessage) }
+                }
+                val onForkForNode = remember(currentMessage.id) {
+                    { onForkMessage(currentMessage) }
+                }
+                val onDeleteForNode = remember(currentMessage.id) {
+                    { onDelete(currentMessage) }
+                }
+                val onToggleFavoriteForNode = remember(nodeId, node.isFavorite, onToggleFavorite) {
+                    if (onToggleFavorite == null) null else ({ onToggleFavorite(node) })
+                }
+
                 Column {
                     ListSelectableItem(
-                        key = node.id,
+                        key = nodeId,
                         onSelectChange = {
-                            if (!selectedItems.contains(node.id)) {
-                                selectedItems.add(node.id)
+                            if (!selectedItems.contains(nodeId)) {
+                                selectedItems.add(nodeId)
                             } else {
-                                selectedItems.remove(node.id)
+                                selectedItems.remove(nodeId)
                             }
                         },
                         selectedKeys = selectedItems,
@@ -361,22 +391,14 @@ private fun ChatListNormal(
                     ) {
                         ChatMessage(
                             node = node,
-                            model = node.currentMessage.modelId?.let(modelById::get)
-                                ?: node.currentMessage.snapshotModel(),
+                            model = currentMessage.modelId?.let(modelById::get)
+                                ?: currentMessage.snapshotModel(),
                             assistant = assistant,
                             loading = loading && !compressing && index == lastMessageIndex,
-                            onRegenerate = {
-                                onRegenerate(node.currentMessage)
-                            },
-                            onEdit = {
-                                onEdit(node.currentMessage)
-                            },
-                            onFork = {
-                                onForkMessage(node.currentMessage)
-                            },
-                            onDelete = {
-                                onDelete(node.currentMessage)
-                            },
+                            onRegenerate = onRegenerateForNode,
+                            onEdit = onEditForNode,
+                            onFork = onForkForNode,
+                            onDelete = onDeleteForNode,
                             onShare = {
                                 // 默认选中从第一条到这一条
                                 selectionState.start(
@@ -388,9 +410,7 @@ private fun ChatListNormal(
                                 onUpdateMessage(it)
                             },
                             isFavorite = node.isFavorite,
-                            onToggleFavorite = {
-                                onToggleFavorite?.invoke(node)
-                            },
+                            onToggleFavorite = onToggleFavoriteForNode,
                             onTranslate = onTranslate,
                             onClearTranslation = onClearTranslation,
                             onToolApproval = onToolApproval,

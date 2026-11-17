@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import me.rerere.ai.core.TokenUsage
 import me.rerere.ai.core.merge
+import me.rerere.ai.pricing.BuiltInPricing
+import me.rerere.ai.pricing.ModelPricing
 import me.rerere.ai.provider.Provider
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
@@ -52,6 +54,14 @@ class UsageRecorder(
 
     private fun record(tag: UsageTag, providerSetting: ProviderSetting, params: TextGenerationParams, usage: TokenUsage) {
         if (usage.promptTokens <= 0 && usage.completionTokens <= 0) return
+        // 价格优先取模型上手动填的（自定义网关常和官方不同价），没有才按模型 id 猜
+        val pricing = params.model.customPricing?.takeIf { it.isConfigured }
+            ?: BuiltInPricing.lookup(params.model.modelId)
+        val cost = pricing?.cost(
+            usage.promptTokens.toLong(),
+            usage.completionTokens.toLong(),
+            usage.cachedTokens.toLong(),
+        ) ?: 0.0
         val record = UsageRecordEntity(
             createdAt = System.currentTimeMillis(),
             source = tag.source.name,
@@ -63,12 +73,22 @@ class UsageRecorder(
             promptTokens = usage.promptTokens,
             completionTokens = usage.completionTokens,
             cachedTokens = usage.cachedTokens,
+            cost = cost,
+            pricingSnapshot = pricing?.let { snapshotOf(it) }.orEmpty(),
         )
         // Room 的 suspend 写入自己会切到后台线程
         scope.launch {
             runCatching { dao.insert(record) }
                 .onFailure { Log.w(TAG, "Failed to record usage", it) }
         }
+    }
+
+    /** 把计价用的单价记成短字符串，便于事后核对「这条按什么价算的」。 */
+    private fun snapshotOf(pricing: ModelPricing): String = buildString {
+        append("in=").append(pricing.inputPerMillion)
+        append(",out=").append(pricing.outputPerMillion)
+        pricing.cachedInputPerMillion?.let { append(",cached=").append(it) }
+        append("/1M")
     }
 
     private inner class UsageRecordingProvider<T : ProviderSetting>(

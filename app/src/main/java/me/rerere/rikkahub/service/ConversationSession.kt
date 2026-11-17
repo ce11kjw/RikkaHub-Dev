@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,15 @@ import kotlin.uuid.Uuid
 
 private const val TAG = "ConversationSession"
 private const val IDLE_TIMEOUT_MS = 5_000L
+
+/**
+ * 流式生成时把内容落库的间隔。
+ *
+ * 生成过程中每个 token 都会更新消息，如果每次都写库，一条长回复要写几百次，明显卡顿；
+ * 完全不写的话，进程被系统杀掉（长会话时很常见）就丢掉整段回复。
+ * 折中成按时间节流：内容先只改内存，最多每 2 秒写一次库，崩溃时最多丢这两秒。
+ */
+internal const val STREAMING_FLUSH_INTERVAL_MS = 2_000L
 
 /** 会话的持久化，由 ChatService 实现 */
 interface ConversationStore {
@@ -257,6 +267,53 @@ class ConversationSession(
     // 空闲检查任务
     private var idleCheckJob: Job? = null
 
+    // 流式落库：有未落库的改动时非空，由后台协程按间隔写一次库
+    private var streamingFlushJob: Job? = null
+
+    /**
+     * 标记「内存里的内容比数据库新」。
+     *
+     * 流式循环每收到一个 chunk 调用一次，开销只有一次判空和赋值；
+     * 真正的写库由后台协程按 [STREAMING_FLUSH_INTERVAL_MS] 节流完成。
+     *
+     * 写法是「有定时器就不再启新的」：既不会每个 token 写一次库，
+     * 也不会在两次间隔之间反复重启定时器（那样会导致永远等不到写库时机）。
+     */
+    @Synchronized
+    fun markDirty() {
+        if (streamingFlushJob?.isActive == true) return
+        streamingFlushJob = scope.launch {
+            delay(STREAMING_FLUSH_INTERVAL_MS)
+            try {
+                // 新会话（还没落过库）也要写：否则刚发第一条就崩，整条会话都不存在
+                flush()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "streaming flush failed for $id", e)
+            } finally {
+                // 定时器职责只有「到点写一次」，写完就清掉自己；
+                // 后续 chunk 会再启动一个新的，所以生成期间是持续每 2 秒一次，生成结束就自然停止
+                synchronized(this@ConversationSession) {
+                    if (streamingFlushJob === coroutineContext[Job]) streamingFlushJob = null
+                }
+            }
+        }
+    }
+
+    /**
+     * 结束流式节流：立刻把剩余内容写库，并停掉定时器。
+     * 生成结束和会话被回收前都要调用，避免最后一小段内容留在内存里。
+     */
+    internal suspend fun stopStreamingFlush() {
+        val job = synchronized(this) {
+            streamingFlushJob?.also { streamingFlushJob = null }
+        }
+        job?.cancel()
+        runCatching { flush() }
+            .onFailure { Log.e(TAG, "final flush failed for $id", it) }
+    }
+
     internal fun acquire(): Int = refCount.incrementAndGet().also {
         cancelIdleCheck()
     }
@@ -335,6 +392,8 @@ class ConversationSession(
         cancelJobs()
         idleCheckJob?.cancel()
         idleCheckJob = null
+        streamingFlushJob?.cancel()
+        streamingFlushJob = null
     }
 }
 

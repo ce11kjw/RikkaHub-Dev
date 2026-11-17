@@ -37,6 +37,8 @@ import me.rerere.rikkahub.data.remote.SettingsProxySelector
 import me.rerere.rikkahub.data.remote.SettingsSocks5Authenticator
 import me.rerere.rikkahub.data.remote.SponsorAPI
 import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.sync.IncrementalRestore
+import me.rerere.rikkahub.data.sync.importer.ExternalImporter
 import me.rerere.rikkahub.data.sync.S3Sync
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.service.memoryDreamKeepAlive
@@ -262,6 +264,10 @@ val dataSourceModule = module {
     }
 
     single { BackupManager(context = get(), database = get(), settingsStore = get(), json = get()) }
+
+    single { IncrementalRestore(context = get(), database = get(), settingsStore = get(), json = get()) }
+
+    single { ExternalImporter(context = get(), database = get()) }
 
     single {
         WebDavSync(

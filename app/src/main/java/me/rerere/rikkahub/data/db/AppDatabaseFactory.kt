@@ -12,11 +12,19 @@ import me.rerere.rikkahub.data.db.migrations.Migration_15_16
 import me.rerere.rikkahub.data.db.migrations.Migration_27_28
 import me.rerere.rikkahub.data.db.migrations.Migration_30_31
 import me.rerere.rikkahub.data.db.migrations.Migration_32_33
+import me.rerere.rikkahub.data.db.migrations.Migration_33_34
+import me.rerere.rikkahub.data.db.migrations.Migration_34_35
 import me.rerere.rikkahub.data.db.migrations.Migration_6_7
 import java.io.File
 
 /** Shared schema, migrations and extensions for the app and staged backup validation. */
 internal object AppDatabaseFactory {
+    /**
+     * 当前 App 的数据库 schema 版本，必须和 [AppDatabase] 注解里的 version 保持一致。
+     * 备份恢复时要用它判断「备份库是否比本机新」，从而决定是否需要降级。
+     */
+    const val schemaVersion: Int = 35
+
     fun create(context: Context, name: String = SQLiteConfiguration.DATABASE_NAME): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, name)
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
@@ -29,6 +37,8 @@ internal object AppDatabaseFactory {
                 Migration_27_28,
                 Migration_30_31,
                 Migration_32_33,
+                Migration_33_34,
+                Migration_34_35,
             )
             .addCallback(object : RoomDatabase.Callback() {
                 override fun onOpen(db: SupportSQLiteDatabase) {

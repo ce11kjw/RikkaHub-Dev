@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.db.AppDatabase
@@ -44,14 +45,50 @@ class ConversationRepository(
     suspend fun hasFileReference(fileUrl: String): Boolean =
         messageNodeDAO.hasFileReference(JsonInstant.encodeToString(fileUrl))
 
-    suspend fun getRecentConversations(assistantId: Uuid, limit: Int = 10): List<Conversation> {
-        return conversationDAO.getRecentConversationsOfAssistant(
-            assistantId = assistantId.toString(),
-            limit = limit
-        ).map { entity ->
+    /**
+     * 最近的会话，按「置顶优先、更新时间倒序」。
+     *
+     * @param assistantId 传 null 表示不限制助手。用户经常换个助手继续聊同一件事，
+     *   只认当前助手会漏掉真正相关的那段对话。
+     */
+    suspend fun getRecentConversations(assistantId: Uuid?, limit: Int = 10): List<Conversation> {
+        val entities = if (assistantId == null) {
+            conversationDAO.getRecentConversations(limit)
+        } else {
+            conversationDAO.getRecentConversationsOfAssistant(
+                assistantId = assistantId.toString(),
+                limit = limit
+            )
+        }
+        return entities.map { entity ->
             val nodes = loadMessageNodes(entity.id)
             conversationEntityToConversation(entity, nodes)
         }
+    }
+
+    /**
+     * 找出应该被新会话「接上」的上一个会话。
+     *
+     * 先在同一助手里找，找不到再放宽到全部助手 —— 用户换个助手接着聊是常事，
+     * 只认同一助手就会出现「明明刚说完却装作不认识」。
+     *
+     * @return 最近的、有实际内容的、且不是 [conversationId] 自己的会话；没有则 null
+     */
+    suspend fun findPreviousConversation(conversationId: Uuid, assistantId: Uuid): Conversation? {
+        val candidates = (
+            conversationDAO.getRecentConversationsOfAssistant(assistantId.toString(), 10) +
+                conversationDAO.getRecentConversations(10)
+            )
+            .distinctBy { it.id }
+            .filter { it.id != conversationId.toString() }
+        for (entity in candidates) {
+            val conversation = conversationEntityToConversation(entity, loadMessageNodes(entity.id))
+            val hasContent = conversation.currentMessages.any { message ->
+                message.role == MessageRole.USER || message.role == MessageRole.ASSISTANT
+            }
+            if (hasContent) return conversation
+        }
+        return null
     }
 
     fun getConversationsOfAssistant(assistantId: Uuid): Flow<List<Conversation>> {
@@ -405,6 +442,8 @@ class ConversationRepository(
             workspaceCwd = conversation.workspaceCwd ?: "",
             folderId = conversation.folderId?.toString() ?: "",
             config = conversation.config?.let { JsonInstant.encodeToString(it) } ?: "",
+            contextSummary = conversation.contextSummary?.let { JsonInstant.encodeToString(it) } ?: "",
+            priorContext = conversation.priorContext ?: "",
         )
     }
 
@@ -427,6 +466,9 @@ class ConversationRepository(
             workspaceCwd = conversationEntity.workspaceCwd.ifEmpty { null },
             folderId = conversationEntity.folderId.ifEmpty { null }?.let { Uuid.parse(it) },
             config = conversationEntity.config.ifEmpty { null }?.let { JsonInstant.decodeFromString(it) },
+            contextSummary = conversationEntity.contextSummary.ifEmpty { null }
+                ?.let { JsonInstant.decodeFromString(it) },
+            priorContext = conversationEntity.priorContext.ifEmpty { null },
         )
     }
 
@@ -470,6 +512,26 @@ class ConversationRepository(
 
     suspend fun updateCustomSystemPrompt(conversationId: Uuid, customSystemPrompt: String?) {
         conversationDAO.updateCustomSystemPrompt(conversationId.toString(), customSystemPrompt ?: "")
+    }
+
+    /**
+     * 只写压缩摘要这一列。
+     *
+     * 压缩完成时 messageNodes 一个字没变，走 [updateConversation] 会把整份节点删了重插，
+     * 会话大的时候（几万条消息）纯属白花钱，还会让全文索引重建一遍。
+     */
+    suspend fun updateContextSummary(conversationId: Uuid, contextSummary: String?) {
+        conversationDAO.updateContextSummary(
+            id = conversationId.toString(),
+            contextSummary = contextSummary.orEmpty(),
+        )
+    }
+
+    suspend fun updatePriorContext(conversationId: Uuid, priorContext: String?) {
+        conversationDAO.updatePriorContext(
+            id = conversationId.toString(),
+            priorContext = priorContext.orEmpty(),
+        )
     }
 
     suspend fun updateChatSuggestions(conversationId: Uuid, chatSuggestions: List<String>) {

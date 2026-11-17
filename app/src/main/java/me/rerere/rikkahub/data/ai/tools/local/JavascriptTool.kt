@@ -48,9 +48,23 @@ internal fun buildJavascriptTool(): Tool = Tool(
     }
 )
 
+/**
+ * 技能脚本用的受限文件访问器。
+ *
+ * 所有方法都接收 `root`（技能目录）和相对路径，实现方负责防越界。
+ * 传 null 表示不开放文件访问（普通 eval_javascript 场景就是这样）。
+ */
+internal interface SkillFileAccess {
+    fun read(root: String, relPath: String): String
+    fun write(root: String, relPath: String, text: String): Boolean
+    fun exists(root: String, relPath: String): Boolean
+    fun list(root: String, relPath: String): String
+}
+
 internal suspend fun evaluateJavascript(
     code: String,
     timeoutMillis: Long = JS_EXECUTION_TIMEOUT_MS,
+    fileAccess: SkillFileAccess? = null,
 ): String = withContext(Dispatchers.Default) {
     val logs = StringBuilder()
     var logsTruncated = false
@@ -79,6 +93,24 @@ internal suspend fun evaluateJavascript(
                 evaluationTimeoutMillis = timeoutMillis
                 function("__rikkahubLog") { args ->
                     appendLog(args[0] as String)
+                }
+                if (fileAccess != null) {
+                    function("__rikkahubReadFile") { args ->
+                        fileAccess.read(args[0] as String, args[1] as String)
+                    }
+                    function("__rikkahubWriteFile") { args ->
+                        fileAccess.write(args[0] as String, args[1] as String, args[2] as String)
+                    }
+                    function("__rikkahubExists") { args ->
+                        fileAccess.exists(args[0] as String, args[1] as String)
+                    }
+                    function("__rikkahubList") { args ->
+                        fileAccess.list(args[0] as String, args[1] as String)
+                    }
+                    // 脚本里的异常要回到 JS 侧抛出，否则会被 QuickJS 当成普通返回值
+                    function("__rikkahubThrow") { args ->
+                        throw IllegalStateException(args[0]?.toString() ?: "script error")
+                    }
                 }
                 // Convert values inside the timed evaluation: getters/toJSON can run JS,
                 // and returning arbitrary objects would also bypass the output limit.
@@ -109,6 +141,8 @@ internal suspend fun evaluateJavascript(
                                 log(line);
                             };
                         }
+                        // print 是脚本里最常用的输出方式，给个短别名；它和 console.log 同一实现
+                        globalThis.print = (...args) => console.log(...args);
                         const result = (0, eval)(${JsonPrimitive(code)});
                         if (result == null) return null;
                         const type = typeof result;

@@ -33,6 +33,7 @@ import me.rerere.rikkahub.data.remote.ModelsDevUpdater
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.data.skills.SkillManager
 import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.sync.autobackup.AutoBackupScheduler
 import me.rerere.rikkahub.data.sync.RestoreFailedException
 import me.rerere.rikkahub.di.appModule
 import me.rerere.rikkahub.di.dataSourceModule
@@ -108,6 +109,33 @@ class RikkaHubApp : Application() {
 
         // Load models.dev data for model capability matching, then refresh it in background
         updateModelsDev()
+
+        // 让后台自动备份任务和当前设置保持一致：
+        // 用户开启后即使不打开备份页，也应该从下次开机起继续生效
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                AutoBackupScheduler.sync(this@RikkaHubApp, get<SettingsStore>().awaitLoaded())
+            }.onFailure { Log.w(TAG, "auto backup schedule failed", it) }
+        }
+
+        // 习惯分析的定时任务：配置变了就重新调度，幂等
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                me.rerere.rikkahub.data.ai.habit.HabitAnalysisScheduler.sync(
+                    this@RikkaHubApp,
+                    get<SettingsStore>().awaitLoaded().habitAnalysisConfig,
+                )
+            }.onFailure { Log.w(TAG, "habit analysis schedule failed", it) }
+        }
+
+        // 技能脚本多数是 python / node 写的，而系统只有 sh。
+        // 启动时顺手准备一套 Linux 环境，装好之后技能就不受系统限制。
+        // 全程后台、只做一次，失败也不影响使用（脚本退回系统 sh）。
+        get<AppScope>().launch(Dispatchers.IO) {
+            runCatching {
+                get<me.rerere.rikkahub.data.workspace.BuiltinShellProvisioner>().ensureReady()
+            }.onFailure { Log.w(TAG, "builtin shell provision failed", it) }
+        }
 
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()

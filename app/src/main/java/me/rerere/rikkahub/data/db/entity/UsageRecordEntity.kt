@@ -40,4 +40,17 @@ data class UsageRecordEntity(
     val completionTokens: Int,
     @ColumnInfo("cached_tokens")
     val cachedTokens: Int,
+    /**
+     * 本次请求的花费（美元）。写入时就按当时的价格算好存下来，
+     * 而不是事后用「当前价格」重算——上游调价后，历史账不该跟着变。
+     * 0 表示没有价格数据，界面上按「未估算」处理。
+     */
+    @ColumnInfo("cost", defaultValue = "0")
+    val cost: Double = 0.0,
+    /**
+     * 计价时用的单价快照（美元/百万 token）。留成文本是为了：
+     * 事后能看出这条记录是按什么价格算的，也能在价格录入错误时批量重算。
+     */
+    @ColumnInfo("pricing_snapshot", defaultValue = "")
+    val pricingSnapshot: String = "",
 )

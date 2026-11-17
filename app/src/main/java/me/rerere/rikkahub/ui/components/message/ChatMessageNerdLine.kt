@@ -49,6 +49,7 @@ import me.rerere.hugeicons.stroke.Repeat
 import me.rerere.hugeicons.stroke.Zap
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.datastore.findModelById
+import me.rerere.rikkahub.ui.context.LocalContextCompression
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.utils.formatNumber
 import me.rerere.rikkahub.utils.toFixed
@@ -72,6 +73,8 @@ fun ChatMessageNerdLine(
     if (!settings.displaySetting.showTokenUsage || usage == null) return
 
     val stats = remember(message) { message.nerdStats(usage) }
+    // 会话级的压缩情况：消息自身拿不到，由上层通过 CompositionLocal 传下来
+    val compression = LocalContextCompression.current
     // 消息里的模型快照不带上下文窗口，只能从设置里按 ID 找；模型被删了就不显示窗口大小
     val contextLength = remember(settings.providers, message.modelId) {
         settings.findModelById(message.modelId)?.contextLength?.takeIf { it > 0 }
@@ -85,7 +88,7 @@ fun ChatMessageNerdLine(
             RichTooltip(
                 title = { Text(stringResource(R.string.chat_message_usage_title)) },
             ) {
-                UsageDetails(stats, contextLength)
+                UsageDetails(stats, contextLength, compression)
             }
         },
         state = tooltipState,
@@ -124,6 +127,23 @@ fun ChatMessageNerdLine(
                             }
                         }
                     )
+                    // 压缩过的会话才多显示一段，没压缩时这行和原来完全一样
+                    compression?.let { info ->
+                        if (info.foldedMessageCount > 0) {
+                            StatsItem(
+                                icon = { StatsIcon(HugeIcons.Layers01, stringResource(R.string.chat_message_usage_compressed)) },
+                                content = {
+                                    Text(
+                                        text = stringResource(
+                                            R.string.chat_message_usage_compressed_short,
+                                            info.foldedMessageCount,
+                                            info.foldedTokens.formatNumber(),
+                                        )
+                                    )
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -131,7 +151,11 @@ fun ChatMessageNerdLine(
 }
 
 @Composable
-private fun UsageDetails(stats: NerdStats, contextLength: Int?) {
+private fun UsageDetails(
+    stats: NerdStats,
+    contextLength: Int?,
+    compression: me.rerere.rikkahub.ui.context.ContextCompressionInfo?,
+) {
     Column(
         verticalArrangement = Arrangement.spacedBy(2.dp),
         modifier = Modifier.padding(vertical = 4.dp),
@@ -147,6 +171,20 @@ private fun UsageDetails(stats: NerdStats, contextLength: Int?) {
             UsageDetailRow(stringResource(R.string.chat_message_usage_total_input), total.promptTokens.exact())
             if (total.cachedTokens > 0) UsageDetailRow(stringResource(R.string.chat_message_usage_total_cached), total.cachedTokens.exact())
             UsageDetailRow(stringResource(R.string.chat_message_usage_total_output), total.completionTokens.exact())
+        }
+        // 压缩过的会话才显示；没压缩时不占位置。
+        // 一行说清「压掉几条、原来多大、省了多少」，比拆成两行好读
+        compression?.let { info ->
+            if (info.foldedMessageCount > 0) {
+                UsageDetailRow(
+                    stringResource(R.string.chat_message_usage_compressed),
+                    stringResource(
+                        R.string.chat_message_usage_compressed_detail,
+                        "${info.foldedMessageCount} 条 · ${info.foldedTokens.exact()}",
+                        info.savedTokens.exact(),
+                    ),
+                )
+            }
         }
         if (stats.tps != null) UsageDetailRow(stringResource(R.string.chat_message_usage_speed), "${stats.tps.toFixed(1)} tok/s")
         if (stats.durationMillis != null) UsageDetailRow(stringResource(R.string.chat_message_usage_duration), "${(stats.durationMillis / 1000f).toFixed(1)}s")

@@ -29,6 +29,11 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Calendar03
 import me.rerere.hugeicons.stroke.ChartLineData01
 import me.rerere.hugeicons.stroke.ClipboardPaste
+import me.rerere.hugeicons.stroke.Internet
+import me.rerere.hugeicons.stroke.Folder01
+import me.rerere.hugeicons.stroke.ComputerTerminal01
+import me.rerere.hugeicons.stroke.MagicWand01
+import me.rerere.hugeicons.stroke.Github
 import me.rerere.hugeicons.stroke.Clock01
 import me.rerere.hugeicons.stroke.JavaScript
 import me.rerere.hugeicons.stroke.MessageQuestion
@@ -261,6 +266,36 @@ private fun AssistantLocalToolContent(
                 icon = HugeIcons.ChartLineData01,
                 title = R.string.assistant_page_local_tools_chart_display_title,
                 description = R.string.assistant_page_local_tools_chart_display_desc,
+            )
+            toolItem(
+                option = LocalToolOption.HttpRequest,
+                icon = HugeIcons.Internet,
+                title = R.string.assistant_page_local_tools_http_request_title,
+                description = R.string.assistant_page_local_tools_http_request_desc,
+            )
+            toolItem(
+                option = LocalToolOption.FileAccess,
+                icon = HugeIcons.Folder01,
+                title = R.string.assistant_page_local_tools_file_access_title,
+                description = R.string.assistant_page_local_tools_file_access_desc,
+            )
+            toolItem(
+                option = LocalToolOption.SshExec,
+                icon = HugeIcons.ComputerTerminal01,
+                title = R.string.assistant_page_local_tools_ssh_title,
+                description = R.string.assistant_page_local_tools_ssh_desc,
+            )
+            toolItem(
+                option = LocalToolOption.Utilities,
+                icon = HugeIcons.MagicWand01,
+                title = R.string.assistant_page_local_tools_utilities_title,
+                description = R.string.assistant_page_local_tools_utilities_desc,
+            )
+            toolItem(
+                option = LocalToolOption.GithubQuery,
+                icon = HugeIcons.Github,
+                title = R.string.assistant_page_local_tools_github_title,
+                description = R.string.assistant_page_local_tools_github_desc,
             )
             // 只有 github 渠道的 Android 11 及以上才有
             if (PhoneUseManager.isSupported) {

@@ -112,6 +112,7 @@ import me.rerere.rikkahub.ui.pages.mediacreation.MediaCreationPage
 import me.rerere.rikkahub.ui.pages.mediacreation.MediaCreationSessionsPage
 import me.rerere.rikkahub.ui.pages.search.SearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingAboutPage
+import me.rerere.rikkahub.ui.pages.setting.SettingHabitPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesPage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesThemePage
 import me.rerere.rikkahub.ui.pages.setting.SettingPreferencesNotificationPage
@@ -492,6 +493,9 @@ class RouteActivity : ComponentActivity() {
                                 SettingModelPage()
                             }
 
+                            entry<Screen.SettingHabit> {
+                                SettingHabitPage()
+                            }
                             entry<Screen.SettingAbout> {
                                 SettingAboutPage()
                             }
@@ -751,6 +755,7 @@ sealed interface Screen : NavKey {
     data object SettingModels : Screen
 
     @Serializable
+    data object SettingHabit : Screen
     data object SettingAbout : Screen
 
     @Serializable

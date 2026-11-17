@@ -38,6 +38,7 @@ import androidx.compose.material3.adaptive.currentWindowDpSize
 import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -352,6 +353,22 @@ private fun ChatPageContent(
         modifier = Modifier.fillMaxSize()
     ) {
         AssistantBackground(setting = setting, modifier = Modifier.hazeSource(hazeState))
+        // 用量卡片要显示"压缩掉了多少"，这个信息只有会话级才知道，从顶层传下去
+        val compressionInfo = remember(conversation.contextSummary, conversation.messageNodes) {
+            conversation.contextSummary?.let { summary ->
+                val cutoff = conversation.messageNodes.indexOfFirst { it.id == summary.upToNodeId }
+                if (cutoff < 0) return@let null
+                val folded = conversation.messageNodes.take(cutoff + 1)
+                me.rerere.rikkahub.ui.context.ContextCompressionInfo(
+                    foldedMessageCount = folded.size,
+                    // 原文 token 数没有逐条记录，按字符数估算（中英混排大约 2 字符/token）
+                    foldedTokens = folded.sumOf { it.currentMessage.toText().length } / 2,
+                    // 摘要按同样比例估算
+                    summaryTokens = summary.summary.length / 2,
+                )
+            }
+        }
+        CompositionLocalProvider(me.rerere.rikkahub.ui.context.LocalContextCompression provides compressionInfo) {
         Scaffold(
             topBar = {
                 TopBar(
@@ -526,6 +543,7 @@ private fun ChatPageContent(
                     vm.updateConversationSystemPrompt(newPrompt)
                 },
             )
+        }
         }
 
         RikkaConfirmDialog(

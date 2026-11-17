@@ -98,6 +98,45 @@ val repositoryModule = module {
     }
 
     single {
+        me.rerere.rikkahub.data.ai.habit.HabitDataCollector(
+            conversationDAO = get(),
+            conversationRepository = get(),
+        )
+    }
+
+    single {
+        me.rerere.rikkahub.data.ai.habit.HabitAnalyzer(
+            providerManager = get(),
+            usageRecorder = get(),
+        )
+    }
+
+    single {
+        me.rerere.rikkahub.data.ai.habit.HabitSkillWriter(skillManager = get())
+    }
+
+    single {
+        me.rerere.rikkahub.data.ai.habit.HabitAnalysisManager(
+            settingsStore = get(),
+            collector = get(),
+            analyzer = get(),
+            writer = get(),
+        )
+    }
+
+    single {
+        me.rerere.rikkahub.data.workspace.WorkspaceBootstrap(workspaceRepository = get())
+    }
+
+    single {
+        me.rerere.rikkahub.data.workspace.BuiltinShellProvisioner(
+            workspaceRepository = get(),
+            workspaceDAO = get(),
+            bootstrap = get(),
+        )
+    }
+
+    single {
         FilesManager(get(), get(), get())
     }
 

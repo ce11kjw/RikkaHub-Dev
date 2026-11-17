@@ -102,3 +102,15 @@ private fun Model.findModelProviderFromList(providers: List<ProviderSetting>): P
     }
     return null
 }
+
+/**
+ * 解析某个用途该用哪个模型。
+ *
+ * 传 null 表示「跟随聊天模型」—— 这是快速/翻译/OCR/记忆整理这几个位置的默认值。
+ * 统一在这里回退，避免每个调用点各写一遍 `?: chatModelId`：
+ * 有一处漏写就会变成「配了跟随但实际用了别的模型」。
+ *
+ * 聊天模型本身也没配（或已失效）时返回 null，由调用方决定怎么报错。
+ */
+fun Settings.resolveModelId(modelId: Uuid?): Uuid? =
+    modelId?.takeIf { findModelById(it) != null } ?: chatModelId.takeIf { findModelById(it) != null }

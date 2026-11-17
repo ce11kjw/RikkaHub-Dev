@@ -50,6 +50,10 @@ interface ConversationDAO {
     )
     suspend fun getRecentConversationsOfAssistant(assistantId: String, limit: Int): List<ConversationEntity>
 
+    /** 按更新时间倒序取最近的会话，不区分助手 —— 习惯分析要看全部对话。 */
+    @Query("SELECT * FROM conversationentity ORDER BY update_at DESC LIMIT :limit")
+    suspend fun getRecentConversations(limit: Int): List<ConversationEntity>
+
     @Query(
         "SELECT * FROM conversationentity WHERE title LIKE '%' || :searchText || '%' ORDER BY is_pinned DESC, update_at DESC"
     )
@@ -134,6 +138,12 @@ interface ConversationDAO {
         lorebookIds: String,
         workspaceCwd: String,
     )
+
+    @Query("UPDATE conversationentity SET context_summary = :contextSummary WHERE id = :id")
+    suspend fun updateContextSummary(id: String, contextSummary: String)
+
+    @Query("UPDATE conversationentity SET prior_context = :priorContext WHERE id = :id")
+    suspend fun updatePriorContext(id: String, priorContext: String)
 
     @Query("UPDATE conversationentity SET folder_id = '' WHERE folder_id = :folderId")
     suspend fun clearFolder(folderId: String)

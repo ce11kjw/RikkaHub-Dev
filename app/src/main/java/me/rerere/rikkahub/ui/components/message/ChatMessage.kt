@@ -414,6 +414,23 @@ private fun MessagePartsBlock(
                     is UIMessagePart.Text -> {
                         // 只有正在生成的最后一段文字可能停在没写完的语法上
                         val streamingText = loading && block.index == parts.lastIndex
+                        // 正则替换是 O(n) 的字符串扫描：流式时每个 token 都重跑一遍会退化成 O(n²)，
+                        // 长回复明显掉帧。结果只跟「文本 + 助手正则配置」有关，缓存住即可，
+                        // 内容没变时直接复用，行为与原来完全一致。
+                        val userDisplayText = remember(part.text, assistant?.regexes) {
+                            part.text.replaceRegexes(
+                                assistant = assistant,
+                                scope = AssistantAffectScope.USER,
+                                visual = true,
+                            )
+                        }
+                        val assistantDisplayText = remember(part.text, assistant?.regexes) {
+                            part.text.replaceRegexes(
+                                assistant = assistant,
+                                scope = AssistantAffectScope.ASSISTANT,
+                                visual = true,
+                            )
+                        }
                         val textContent = @Composable {
                             if (role == MessageRole.USER) {
                                 ChatMessageBubble(
@@ -426,11 +443,7 @@ private fun MessagePartsBlock(
                                         .animateContentSize(),
                                 ) {
                                     MarkdownBlock(
-                                        content = part.text.replaceRegexes(
-                                            assistant = assistant,
-                                            scope = AssistantAffectScope.USER,
-                                            visual = true,
-                                        ),
+                                        content = userDisplayText,
                                         onClickCitation = handleClickCitation
                                     )
                                 }
@@ -442,22 +455,14 @@ private fun MessagePartsBlock(
                                         modifier = Modifier.animateContentSize(),
                                     ) {
                                         MarkdownBlock(
-                                            content = part.text.replaceRegexes(
-                                                assistant = assistant,
-                                                scope = AssistantAffectScope.ASSISTANT,
-                                                visual = true,
-                                            ),
+                                            content = assistantDisplayText,
                                             streaming = streamingText,
                                             onClickCitation = handleClickCitation,
                                         )
                                     }
                                 } else {
                                     MarkdownBlock(
-                                        content = part.text.replaceRegexes(
-                                            assistant = assistant,
-                                            scope = AssistantAffectScope.ASSISTANT,
-                                            visual = true,
-                                        ),
+                                        content = assistantDisplayText,
                                         streaming = streamingText,
                                         onClickCitation = handleClickCitation,
                                         modifier = Modifier
