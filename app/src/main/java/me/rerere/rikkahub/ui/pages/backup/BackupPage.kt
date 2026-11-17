@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Bucket
 import me.rerere.hugeicons.stroke.CloudServer
+import me.rerere.hugeicons.stroke.CloudUpload
 import me.rerere.hugeicons.stroke.Notification01
 import me.rerere.hugeicons.stroke.SmartPhone01
 import me.rerere.rikkahub.R
@@ -33,6 +34,7 @@ import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.PagerTab
 import me.rerere.rikkahub.ui.components.ui.PagerTabs
 import me.rerere.rikkahub.ui.pages.backup.components.BackupDialog
+import me.rerere.rikkahub.ui.pages.backup.tabs.AutoBackupTab
 import me.rerere.rikkahub.ui.pages.backup.tabs.ImportExportTab
 import me.rerere.rikkahub.ui.pages.backup.tabs.ReminderTab
 import me.rerere.rikkahub.ui.pages.backup.tabs.S3Tab
@@ -47,6 +49,7 @@ private enum class BackupTab(
     LOCAL(HugeIcons.SmartPhone01, R.string.backup_page_import_export),
     WEBDAV(HugeIcons.CloudServer, R.string.backup_page_webdav_backup),
     S3(HugeIcons.Bucket, R.string.backup_page_s3_backup),
+    AUTO(HugeIcons.CloudUpload, R.string.backup_page_auto_backup),
     REMINDER(HugeIcons.Notification01, R.string.backup_page_reminder);
 
     override val label: String
@@ -114,6 +117,10 @@ fun BackupPage(vm: BackupVM = koinViewModel()) {
                             vm = vm,
                             onShowRestartDialog = { showRestartDialog = true }
                         )
+                    }
+
+                    BackupTab.AUTO -> {
+                        AutoBackupTab(vm = vm)
                     }
 
                     BackupTab.REMINDER -> {

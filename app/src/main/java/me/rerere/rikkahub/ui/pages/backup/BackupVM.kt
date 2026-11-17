@@ -16,6 +16,10 @@ import me.rerere.rikkahub.data.datastore.WebDavConfig
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.files.saveUploadFromBytes
 import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.data.sync.IncrementalRestore
+import me.rerere.rikkahub.data.sync.IncrementalRestoreReport
+import me.rerere.rikkahub.data.sync.importer.ExternalImporter
+import me.rerere.rikkahub.data.sync.importer.ImportSummary
 import me.rerere.rikkahub.data.sync.importer.ChatboxImporter
 import me.rerere.rikkahub.data.sync.importer.CherryStudioProviderImporter
 import me.rerere.rikkahub.data.sync.webdav.WebDavBackupItem
@@ -28,6 +32,8 @@ import java.io.File
 private const val TAG = "BackupVM"
 
 class BackupVM(
+    private val incrementalRestore: IncrementalRestore,
+    private val externalImporter: ExternalImporter,
     private val settingsStore: SettingsStore,
     private val webDavSync: WebDavSync,
     private val s3Sync: S3Sync,
@@ -106,6 +112,25 @@ class BackupVM(
             file,
             settings.value.webDavConfig.copy(items = localBackupItems.value),
         )
+    }
+
+    /**
+     * 增量恢复：把备份里当前缺的会话、消息、分组、收藏、文件补回来，已有的不覆盖。
+     * 和整库替换不同，这里立刻生效，不需要重启。
+     */
+    suspend fun mergeFromLocalFile(file: File): IncrementalRestoreReport = withContext(Dispatchers.IO) {
+        val result = incrementalRestore.restore(
+            archive = file,
+            includeDatabase = WebDavConfig.BackupItem.DATABASE in localBackupItems.value,
+            includeFiles = WebDavConfig.BackupItem.FILES in localBackupItems.value,
+        )
+        Log.i(
+            TAG,
+            "mergeFromLocalFile: +${result.conversations} conversations, +${result.messages} messages, " +
+                "+${result.files} files (skip ${result.skippedFiles}), +${result.settings} settings, " +
+                "+${result.otherRows} other rows"
+        )
+        result
     }
 
     suspend fun restoreFromChatBox(file: File): ChatboxRestoreResult = withContext(Dispatchers.IO) {
@@ -219,6 +244,39 @@ class BackupVM(
 
     suspend fun deleteS3BackupFile(item: S3BackupItem) {
         s3Sync.deleteS3BackupFile(settings.value.s3Config, item)
+    }
+
+    /** 识别文件来自哪个应用，供界面提示；识别不出返回 null。 */
+    fun detectImportSource(file: File) = externalImporter.detect(file)
+
+    /**
+     * 从其他 AI 聊天应用导入（Chatbox / Cherry Studio / NextChat / LobeChat / ChatGPT / Claude / Jan / Msty）。
+     * 会话按「来源+原 id」派生固定 UUID 去重，重复导入同一份备份不会产生重复。提供商配置存在时一并补上。
+     */
+    suspend fun importFromOtherApp(file: File): ImportSummary = withContext(Dispatchers.IO) {
+        val source = externalImporter.detect(file)
+        val summary = externalImporter.import(
+            file = file,
+            existingProviders = settings.value.providers,
+            shouldImportConversation = { externalId ->
+                // id 派生规则与写入方共用 ExternalImporter.conversationKey，避免两边算法不一致导致判重失效
+                if (source == null) true else {
+                    val key = ExternalImporter.conversationKey(source, externalId)
+                    !conversationRepository.existsConversationById(kotlin.uuid.Uuid.parse(key))
+                }
+            },
+            onProviders = { imported ->
+                if (imported.isNotEmpty()) {
+                    settingsStore.update { latest ->
+                        val existing = latest.providers.map { it.id }.toSet()
+                        latest.copy(providers = latest.providers + imported.filter { it.id !in existing })
+                    }
+                }
+            },
+        )
+        Log.i(TAG, "importFromOtherApp: ${summary.source?.displayName} → " +
+            "${summary.conversations} 会话 / ${summary.messages} 消息 / ${summary.providers} 提供商")
+        summary
     }
 
     private suspend fun recordBackupTime() {

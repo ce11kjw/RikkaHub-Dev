@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.sync
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -125,6 +126,9 @@ class BackupManager(
                     require(!stagedWal.exists() || stagedDatabase.exists()) { "Backup WAL has no matching database" }
                     if (stagedDatabase.exists()) {
                         DatabaseBackup.normalize(context, stagedDatabase)
+                        // 备份来自更新的版本时先降级（Room 只会向上迁移，遇到更新的库会直接抛错）。
+                        // 新增字段对旧版本没有意义，去掉后双方共有的数据仍可完整导出/导入。
+                        downgradeIfNewerThanApp(stagedDatabase)
                         // Reject unsupported schemas before publishing; run supported old migrations on the copy.
                         val room = AppDatabaseFactory.create(context, stagedDatabase.absolutePath)
                         try {
@@ -151,6 +155,29 @@ class BackupManager(
             }
         }
 
+    /**
+     * 备份库 schema 比当前 App 新时，把它降到当前版本，使恢复能成功。
+     *
+     * 典型场景：开发版（v34，usage_record 多了 cost/pricing_snapshot）导出的备份
+     * 拿到正式版（v32）恢复。只丢掉新版本独有的列，会话、消息等共有的数据全部保留。
+     * 降级失败时抛错而不是继续，避免把不兼容的库写进正式版。
+     */
+    private fun downgradeIfNewerThanApp(stagedDatabase: File) {
+        val backupVersion = DatabaseDowngrade.readVersion(context, stagedDatabase) ?: return
+        // 当前 App 编译期就知道自己的 schema 版本，用 Room 打开一次拿到它
+        val appVersion = AppDatabaseFactory.schemaVersion
+        if (backupVersion <= appVersion) return
+
+        Log.i(TAG, "stageRestore: 备份库 v$backupVersion 高于当前 v$appVersion，尝试降级")
+        val columnsToDrop = DatabaseDowngradePlan.columnsToDropFor(backupVersion, appVersion)
+            ?: throw IllegalStateException(
+                "备份来自更新的版本（v$backupVersion），当前版本是 v$appVersion，暂不支持这种降级"
+            )
+        check(DatabaseDowngrade.downgrade(context, stagedDatabase, appVersion, columnsToDrop)) {
+            "备份来自更新的版本（v$backupVersion），降级失败，已中止恢复以保护数据"
+        }
+    }
+
     private fun isAttachment(name: String): Boolean {
         val folder = name.substringBefore('/')
         if (folder !in ATTACHMENT_FOLDERS || '/' !in name) return false
@@ -167,6 +194,7 @@ class BackupManager(
     }
 
     companion object {
+        private const val TAG = "BackupManager"
         private val ATTACHMENT_FOLDERS =
             listOf(FileFolders.UPLOAD, FileFolders.SKILLS, FileFolders.FONTS, FileFolders.MEDIA_CREATION)
 

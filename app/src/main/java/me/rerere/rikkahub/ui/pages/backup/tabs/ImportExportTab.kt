@@ -52,6 +52,11 @@ fun ImportExportTab(
     var isExporting by remember { mutableStateOf(false) }
     var isRestoring by remember { mutableStateOf(false) }
     var showImportConfirmDialog by remember { mutableStateOf(false) }
+    // 增量恢复：选择文件后先记下模式，launcher 回调里据此分流
+    var showMergeConfirmDialog by remember { mutableStateOf(false) }
+    var isMerging by remember { mutableStateOf(false) }
+    // 从其他应用导入：选择文件后由 ExternalImporter 自动识别来源
+    var isExternalImporting by remember { mutableStateOf(false) }
 
     // 导入类型：local 为本地备份，chatbox 为 Chatbox 导入，cherry 为 Cherry Studio 导入
     var importType by remember { mutableStateOf("local") }
@@ -102,6 +107,74 @@ fun ImportExportTab(
                 isRestoring = true
                 runCatching {
                     when (importType) {
+                        "external" -> {
+                            val tempFile =
+                                File(context.cacheDir, "temp_external_${System.currentTimeMillis()}.zip")
+                            try {
+                                context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
+                                    FileOutputStream(tempFile).use { outputStream ->
+                                        inputStream.copyTo(outputStream)
+                                    }
+                                }
+                                val summary = vm.importFromOtherApp(tempFile)
+                                val sourceName = summary.source?.displayName ?: "其他应用"
+                                toaster.show(
+                                    context.getString(
+                                        R.string.backup_page_external_success,
+                                        sourceName,
+                                        summary.conversations,
+                                        summary.messages,
+                                    ),
+                                    type = ToastType.Success
+                                )
+                                // 有额外说明（例如官方导出不含 API 配置）时补一条提示
+                                summary.notes.firstOrNull()?.let { note ->
+                                    toaster.show(note, type = ToastType.Info)
+                                }
+                            } finally {
+                                tempFile.delete()
+                            }
+                            isExternalImporting = false
+                            return@launch
+                        }
+
+                        "merge" -> {
+                            // 增量恢复：只补缺失的，不覆盖现有数据，也不需要重启
+                            val tempFile =
+                                File(context.cacheDir, "temp_merge_${System.currentTimeMillis()}.zip")
+                            try {
+                                context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
+                                    FileOutputStream(tempFile).use { outputStream ->
+                                        inputStream.copyTo(outputStream)
+                                    }
+                                }
+                                val report = vm.mergeFromLocalFile(tempFile)
+                                if (report.isEmpty) {
+                                    // 同一个备份连按两次、或本地已经全有：这是正常结果，不是失败
+                                    toaster.show(
+                                        context.getString(R.string.backup_page_merge_nothing_new),
+                                        type = ToastType.Success
+                                    )
+                                } else {
+                                    toaster.show(
+                                        context.getString(
+                                            R.string.backup_page_merge_success,
+                                            report.conversations,
+                                            report.messages,
+                                            report.files,
+                                            report.settings,
+                                        ),
+                                        type = ToastType.Success
+                                    )
+                                }
+                            } finally {
+                                tempFile.delete()
+                            }
+                            isMerging = false
+                            // 合并是原地补数据，不需要重启
+                            return@launch
+                        }
+
                         "local" -> {
                             // 本地备份导入：处理zip文件
                             val tempFile =
@@ -170,6 +243,8 @@ fun ImportExportTab(
                     )
                 }
                 isRestoring = false
+                isMerging = false
+                isExternalImporting = false
             }
         }
     }
@@ -238,36 +313,90 @@ fun ImportExportTab(
         }
 
         CardGroup(
-            title = { Text(stringResource(R.string.backup_page_import_from_other_app)) },
+            title = { Text(stringResource(R.string.backup_page_merge_group)) },
         ) {
             item(
-                onClick = if (!isRestoring) {
+                onClick = if (!isRestoring && !isMerging) {
                     {
-                        importType = "chatbox"
-                        openDocumentLauncher.launch(arrayOf("application/zip"))
+                        showMergeConfirmDialog = true
                     }
                 } else null,
-                headlineContent = { Text(stringResource(R.string.backup_page_import_from_chatbox)) },
-                supportingContent = { Text(stringResource(R.string.backup_page_import_chatbox_desc)) },
-                leadingContent = {
-                    BackupActionIcon(HugeIcons.FileImport, loading = isRestoring && importType == "chatbox")
+                headlineContent = { Text(stringResource(R.string.backup_page_merge_import)) },
+                supportingContent = {
+                    Text(
+                        if (isMerging) {
+                            stringResource(R.string.backup_page_merging)
+                        } else {
+                            stringResource(R.string.backup_page_merge_desc)
+                        }
+                    )
                 },
-            )
-
-            item(
-                onClick = if (!isRestoring) {
-                    {
-                        importType = "cherry"
-                        openDocumentLauncher.launch(arrayOf("application/zip"))
-                    }
-                } else null,
-                headlineContent = { Text(stringResource(R.string.backup_page_import_from_cherry_studio)) },
-                supportingContent = { Text(stringResource(R.string.backup_page_import_cherry_studio_desc)) },
                 leadingContent = {
-                    BackupActionIcon(HugeIcons.FileImport, loading = isRestoring && importType == "cherry")
+                    BackupActionIcon(HugeIcons.FileImport, loading = isMerging)
                 },
             )
         }
+
+        CardGroup(
+            title = { Text(stringResource(R.string.backup_page_import_from_other_app)) },
+        ) {
+            item(
+                onClick = if (!isRestoring && !isExternalImporting) {
+                    {
+                        importType = "external"
+                        isExternalImporting = true
+                        // 各家备份格式不一：json 和 zip 都放开，选完按内容自动识别来源
+                        openDocumentLauncher.launch(
+                            arrayOf(
+                                "application/zip",
+                                "application/json",
+                                "text/plain",
+                                "application/octet-stream",
+                                "*/*",
+                            )
+                        )
+                    }
+                } else null,
+                headlineContent = { Text(stringResource(R.string.backup_page_import_external)) },
+                supportingContent = {
+                    Text(
+                        if (isExternalImporting) {
+                            stringResource(R.string.backup_page_importing)
+                        } else {
+                            stringResource(R.string.backup_page_import_external_desc)
+                        }
+                    )
+                },
+                leadingContent = {
+                    BackupActionIcon(HugeIcons.FileImport, loading = isExternalImporting)
+                },
+            )
+        }
+    }
+
+    if (showMergeConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showMergeConfirmDialog = false },
+            title = { Text(stringResource(R.string.backup_page_merge_import)) },
+            text = { Text(stringResource(R.string.backup_page_merge_confirm)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showMergeConfirmDialog = false
+                        isMerging = true
+                        importType = "merge"
+                        openDocumentLauncher.launch(arrayOf("application/zip"))
+                    }
+                ) {
+                    Text(stringResource(R.string.confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMergeConfirmDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
     if (showImportConfirmDialog) {
