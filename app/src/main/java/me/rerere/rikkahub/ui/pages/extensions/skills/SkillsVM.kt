@@ -66,6 +66,30 @@ class SkillsVM(
         }
     }
 
+    /** 读出技能的 SKILL.md 全文，供编辑页填充。内置技能返回 null（只读）。 */
+    fun readSkillContent(skill: SkillMetadata, onResult: (String?) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = runCatching {
+                if (!skill.builtin && skill.skillFile.exists()) skill.skillFile.readText() else null
+            }.getOrNull()
+            withContext(Dispatchers.Main) { onResult(text) }
+        }
+    }
+
+    /** 保存编辑后的全文；只允许改用户技能。 */
+    fun updateSkill(skill: SkillMetadata, content: String, onResult: (Boolean) -> Unit) {
+        if (skill.builtin) {
+            onResult(false)
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = runCatching { skillManager.saveSkillFile(skill.name, "SKILL.md", content) }
+                .getOrDefault(false)
+            refreshSkills()
+            withContext(Dispatchers.Main) { onResult(ok) }
+        }
+    }
+
     fun deleteSkill(skill: SkillMetadata) {
         viewModelScope.launch(Dispatchers.IO) {
             skillManager.deleteSkill(skill)

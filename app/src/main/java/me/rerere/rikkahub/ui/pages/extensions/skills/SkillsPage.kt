@@ -20,6 +20,10 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExtendedFloatingActionButton
+import me.rerere.hugeicons.stroke.Edit02
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -92,6 +96,8 @@ fun SkillsPage() {
     val toaster = LocalToaster.current
     val context = LocalContext.current
     var showImportSheet by rememberSaveable { mutableStateOf(false) }
+    var showCreateSheet by rememberSaveable { mutableStateOf(false) }
+    var fabExpanded by rememberSaveable { mutableStateOf(false) }
     var showAddDialog by rememberSaveable { mutableStateOf(false) }
     var showImportDialog by rememberSaveable { mutableStateOf(false) }
     val invalidSkillDirs by vm.invalidSkillDirs.collectAsStateWithLifecycle()
@@ -134,8 +140,29 @@ fun SkillsPage() {
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showImportSheet = true }) {
-                Icon(HugeIcons.Add01, contentDescription = null)
+            // 新建优先（手写技能），导入次之（从文件/仓库拿现成的）
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (fabExpanded) {
+                    ExtendedFloatingActionButton(
+                        onClick = { fabExpanded = false; showImportSheet = true },
+                        icon = { Icon(HugeIcons.FileImport, contentDescription = null) },
+                        text = { Text(stringResource(R.string.skills_page_import)) },
+                    )
+                    ExtendedFloatingActionButton(
+                        onClick = { fabExpanded = false; showCreateSheet = true },
+                        icon = { Icon(HugeIcons.Edit02, contentDescription = null) },
+                        text = { Text(stringResource(R.string.skills_page_create)) },
+                    )
+                }
+                FloatingActionButton(onClick = { fabExpanded = !fabExpanded }) {
+                    Icon(
+                        imageVector = if (fabExpanded) HugeIcons.Cancel01 else HugeIcons.Add01,
+                        contentDescription = null,
+                    )
+                }
             }
         },
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -222,6 +249,17 @@ fun SkillsPage() {
                 }
             }
         }
+    }
+
+    if (showCreateSheet) {
+        SkillCreateDialog(
+            onDismiss = { showCreateSheet = false },
+            onCreate = { name, desc, body, onDone ->
+                vm.saveSkill(name, buildSkillMarkdown(name, desc, body)) { ok ->
+                    onDone(ok)
+                }
+            },
+        )
     }
 
     if (showImportSheet) {
@@ -596,6 +634,110 @@ private fun ImportSkillDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss, enabled = !loading) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+/**
+ * 把三段填写内容拼成合法的 SKILL.md。
+ *
+ * description 必须压成一行：frontmatter 里出现换行会让整个文件解析失败，
+ * 而用户很可能在多行输入框里自然地换行。
+ */
+private fun buildSkillMarkdown(name: String, description: String, body: String): String =
+    buildString {
+        appendLine("---")
+        appendLine("name: ${name.trim()}")
+        appendLine("description: ${description.trim().replace(Regex("\\s+"), " ")}")
+        appendLine("---")
+        appendLine()
+        appendLine(body.trim())
+    }
+
+/**
+ * 新建技能对话框。
+ *
+ * 只让填三样东西：名字、什么时候用、具体怎么做。
+ * 这三样正好对应 frontmatter 的 name/description 和正文 —— 其余交给系统，
+ * 用户不需要知道 SKILL.md 的格式。
+ */
+@Composable
+private fun SkillCreateDialog(
+    onDismiss: () -> Unit,
+    onCreate: (name: String, description: String, body: String, onDone: (Boolean) -> Unit) -> Unit,
+) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var body by rememberSaveable { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var submitting by remember { mutableStateOf(false) }
+
+    val nameValid = name.matches(Regex("[a-z0-9][a-z0-9-]{0,62}"))
+    val canSubmit = nameValid && description.isNotBlank() && body.isNotBlank() && !submitting
+
+    AlertDialog(
+        onDismissRequest = { if (!submitting) onDismiss() },
+        title = { Text(stringResource(R.string.skills_page_create)) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '-' } },
+                    label = { Text("名字") },
+                    supportingText = {
+                        Text(
+                            if (name.isBlank()) "小写字母、数字、减号，例如 disk-cleanup"
+                            else if (!nameValid) "需以小写字母或数字开头"
+                            else "保存为 skills/$name/SKILL.md"
+                        )
+                    },
+                    isError = name.isNotBlank() && !nameValid,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("什么时候用它") },
+                    supportingText = { Text("模型只凭这段决定要不要加载，写清场景，别只写功能") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = body,
+                    onValueChange = { body = it },
+                    label = { Text("具体怎么做") },
+                    supportingText = { Text("步骤、检查项、坑。Markdown 格式") },
+                    minLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = canSubmit,
+                onClick = {
+                    submitting = true
+                    error = null
+                    onCreate(name, description, body) { ok ->
+                        submitting = false
+                        if (ok) onDismiss() else error = "保存失败，检查名字是否与已有技能冲突"
+                    }
+                },
+            ) {
+                Text(stringResource(R.string.confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !submitting) {
+                Text(stringResource(R.string.cancel))
+            }
         },
     )
 }
