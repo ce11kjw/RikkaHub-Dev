@@ -76,6 +76,9 @@ adb shell cat /sys/kernel/susfs/*   # 查看状态
 
 ## 模块开发
 
+**这里讲的是 Magisk / KernelSU / APatch 模块**（开机脚本 + 文件 overlay）。
+写 Xposed hook 模块是另一回事，用 `xposed-module`。
+
 **目录结构**：
 
 ```
